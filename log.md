@@ -1,6 +1,16 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2023-10-28] Phase 2.5: Firestore Real-time Sync
+**執行內容 (Phase 2: Firebase):**
+- **即時同步**: 擴充 `requestAirdrop` 函數，在發幣成功後，會自動從鏈上讀取最新餘額並更新至 Firestore 的 `users/{address}`。
+- **手動同步介面**: 新增 `syncBalance` 雲端函數，允許 App 主動請求餘額同步。
+- **環境配置**: 更新 `package.json` 加入 `dotenv`，並修改 `index.js` 以支援本地 `.env` 與雲端 Secrets 兩種環境變數模式。
+
+**後續步驟:**
+- **整合**: 下一步將在 Android 端整合 Firebase SDK，並呼叫 `requestAirdrop` 與 `syncBalance`。
+
+---
 ## [2023-10-28] Phase 2: Firebase Relay Service - RequestAirdrop Implementation
 **執行內容 (Phase 2: Firebase):**
 - **環境初始化**: 建立 `functions/` 目錄，配置 `package.json` 並安裝 `ethers` 庫。

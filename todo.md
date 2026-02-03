@@ -7,13 +7,14 @@
 
 ## 第二階段：Firebase 中繼站開發 (核心邏輯期)
 - [x] **中繼函數**：實作 `requestAirdrop` 雲端函數，對接合約 `mintTo` 功能。
-- [ ] **密鑰安全**：待手動執行 `firebase functions:secrets:set` 配置管理員私鑰。
-- [ ] **資料同步**：建立 Firestore 監聽邏輯，即時反應餘額變動 (Next step)。
+- [x] **環境變數配置**：由於不使用 Blaze 方案，改用 `.env` 檔案配置管理員私鑰（需確保 `.gitignore` 已排除）。
+- [x] **資料同步**：建立 Firestore 監聽邏輯，即時反應餘額變動 (Next step)。
+- [x] **GitHub CICD**：完成自動化部署設定。
 
 ## 第三階段：Android 原生開發 (前端整合期)
 - [x] **環境初始化**：建立 Android 專案基礎結構。
 - [x] **硬體 ID 讀取**：實作基於 `ANDROID_ID` 的讀取邏輯。
-- [ ] **金鑰生成器 (Refinement)**：將地址推導邏輯從 MainActivity 抽離至獨立模組，並引入 Android KeyStore。
+- [x] **金鑰生成器 (Refinement)**：將地址推導邏輯從 MainActivity 抽離至獨立模組，並引入 Android KeyStore。
 - [ ] **Firebase 整合**：於 App 內導入 Firebase SDK 並對接 Cloud Functions。
 - [ ] **UI 實作**：完成資產看板、收款 QR Code 顯示、以及掃描器功能。
 - [ ] **簽名引擎**：實作本地端離線簽名 (Offline Signing) 功能。

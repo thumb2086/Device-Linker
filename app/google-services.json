@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "16057430929",
+    "project_id": "device-linker-eth",
+    "storage_bucket": "device-linker-eth.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:16057430929:android:c0c5cc0a8fd3de5344a030",
+        "android_client_info": {
+          "package_name": "com.dlinker.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC_9JeUGM3qHyism7YJjtDE9ZIBQ-cuF1w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

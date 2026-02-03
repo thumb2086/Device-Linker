@@ -1,8 +1,11 @@
+require('dotenv').config(); // 載入 .env 文件
+
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const { ethers } = require("ethers");
 
 admin.initializeApp();
+const db = admin.firestore();
 
 // 合約資訊 (由使用者提供)
 const CONTRACT_ADDRESS = "0x531aa0c02ee61bfdaf2077356293f2550a969142";
@@ -16,18 +19,34 @@ const ABI = [
 ];
 
 /**
- * requestAirdrop: 新手入金功能
- * 由 Android App 呼叫，為新生成的硬體地址發放初始 100 DLINK
+ * updateUserBalance: 內部函數，用於讀取鏈上餘額並更新 Firestore
  */
-exports.requestAirdrop = functions.https.onCall(async (data, context) => {
+async function updateUserBalance(address) {
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+
+    const balance = await contract.balanceOf(address);
+    const decimals = await contract.decimals();
+    const formattedBalance = ethers.formatUnits(balance, decimals);
+
+    await db.collection('users').doc(address).set({
+        balance: formattedBalance,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    return formattedBalance;
+}
+
+/**
+ * requestAirdrop: 新手入金功能
+ */
+exports.requestAirdrop = functions.runWith({ secrets: ["ADMIN_PRIVATE_KEY"] }).https.onCall(async (data, context) => {
     const targetAddress = data.address;
 
     if (!ethers.isAddress(targetAddress)) {
         throw new functions.https.HttpsError('invalid-argument', '無效的錢包地址');
     }
 
-    // 從環境變數讀取管理員私鑰
-    // 注意：部署後需執行 firebase functions:secrets:set ADMIN_PRIVATE_KEY="你的私鑰"
     const privateKey = process.env.ADMIN_PRIVATE_KEY;
     if (!privateKey) {
         throw new functions.https.HttpsError('internal', '伺服器私鑰未配置');
@@ -38,20 +57,42 @@ exports.requestAirdrop = functions.https.onCall(async (data, context) => {
         const wallet = new ethers.Wallet(privateKey, provider);
         const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
-        // 鑄造 100 顆 DLINK (假設 decimals 是 18)
         const amount = ethers.parseUnits("100", 18);
-
-        console.log(`正在為 ${targetAddress} 鑄造代幣...`);
         const tx = await contract.mintTo(targetAddress, amount);
-        const receipt = await tx.wait();
+        await tx.wait();
+
+        // 同步餘額到 Firestore
+        const newBalance = await updateUserBalance(targetAddress);
 
         return {
             success: true,
-            txHash: receipt.hash,
+            txHash: tx.hash,
+            balance: newBalance,
             message: "新手入金成功！"
         };
     } catch (error) {
         console.error("Airdrop Error:", error);
+        throw new functions.https.HttpsError('internal', error.message);
+    }
+});
+
+/**
+ * syncBalance: 手動同步餘額
+ */
+exports.syncBalance = functions.https.onCall(async (data, context) => {
+    const targetAddress = data.address;
+    if (!ethers.isAddress(targetAddress)) {
+        throw new functions.https.HttpsError('invalid-argument', '無效的錢包地址');
+    }
+
+    try {
+        const newBalance = await updateUserBalance(targetAddress);
+        return {
+            success: true,
+            balance: newBalance
+        };
+    } catch (error) {
+        console.error("Sync Balance Error:", error);
         throw new functions.https.HttpsError('internal', error.message);
     }
 });
