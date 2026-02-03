@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">D-Linker</string>
+    <string name="contract_address">0x0bbd8A6012ae0ADF39696E513f86f6FE6681B958</string>
 </resources>
