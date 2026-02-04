@@ -1,19 +1,20 @@
 package com.dlinker.app
 
 import com.google.firebase.functions.FirebaseFunctions
-import com.google.firebase.functions.ktx.functions
-import com.google.firebase.ktx.Firebase
+import com.google.firebase.functions.functions
+import com.google.firebase.Firebase
 import kotlinx.coroutines.tasks.await
 
 object FirebaseManager {
-    private val functions: FirebaseFunctions = Firebase.functions("asia-east1") // 根據您的 Firebase 區域設定，預設通常是 us-central1，如果您沒設定請改回或確認
+    private val functions: FirebaseFunctions = Firebase.functions("asia-east1")
 
     /**
      * 向 Cloud Function 請求空投 (新手入金)
      */
-    suspend fun requestAirdrop(walletAddress: String): Result<String> {
+    suspend fun requestAirdrop(walletAddress: String, publicKey: String): Result<String> {
         val data = hashMapOf(
-            "address" to walletAddress
+            "address" to walletAddress,
+            "publicKey" to publicKey
         )
 
         return try {
@@ -53,6 +54,38 @@ object FirebaseManager {
             val response = result.data as Map<*, *>
             val balance = response["balance"] as? String ?: "0"
             Result.success(balance)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 發起轉帳交易
+     */
+    suspend fun transfer(from: String, to: String, amount: String, signature: String): Result<String> {
+        val data = hashMapOf(
+            "from" to from,
+            "to" to to,
+            "amount" to amount,
+            "signature" to signature
+        )
+
+        return try {
+            val result = functions
+                .getHttpsCallable("transfer")
+                .call(data)
+                .await()
+
+            val response = result.data as Map<*, *>
+            val success = response["success"] as? Boolean ?: false
+            val message = response["message"] as? String ?: "未知錯誤"
+            val txHash = response["txHash"] as? String ?: ""
+
+            if (success) {
+                Result.success(txHash)
+            } else {
+                Result.failure(Exception(message))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }

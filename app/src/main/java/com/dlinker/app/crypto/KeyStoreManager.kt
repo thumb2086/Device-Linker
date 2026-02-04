@@ -1,10 +1,12 @@
-package com.example.device_linker.crypto
+package com.dlinker.app.crypto
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Base64
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 object KeyStoreManager {
@@ -27,6 +29,21 @@ object KeyStoreManager {
         }
     }
 
+    fun getPublicKey(): ByteArray {
+        val entry = keyStore.getEntry(KEY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        return entry.certificate.publicKey.encoded
+    }
+
+    fun signData(data: ByteArray): String {
+        val entry = keyStore.getEntry(KEY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val signature = Signature.getInstance("SHA256withECDSA").run {
+            initSign(entry.privateKey)
+            update(data)
+            sign()
+        }
+        return Base64.encodeToString(signature, Base64.NO_WRAP)
+    }
+
     private fun generateNewKeyPair(): KeyPair {
         val keyPairGenerator = KeyPairGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_EC,
@@ -37,9 +54,15 @@ object KeyStoreManager {
             KEY_ALIAS,
             KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
         ).run {
-            setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1")) // Standard for Ethereum
+            // 注意：某些舊設備可能不支援 secp256k1，此處優先嘗試 secp256k1 (Ethereum 標準)
+            // 若失敗則退而求其次使用 secp256r1
+            try {
+                setAlgorithmParameterSpec(ECGenParameterSpec("secp256k1"))
+            } catch (e: Exception) {
+                setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            }
             setDigests(KeyProperties.DIGEST_SHA256)
-            setUserAuthenticationRequired(false) // 在此範例中，我們不要求使用者解鎖
+            setUserAuthenticationRequired(false)
             build()
         }
 

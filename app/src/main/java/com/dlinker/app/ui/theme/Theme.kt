@@ -1,4 +1,4 @@
-package com.example.device_linker.ui.theme
+package com.dlinker.app.ui.theme
 
 import android.app.Activity
 import android.os.Build

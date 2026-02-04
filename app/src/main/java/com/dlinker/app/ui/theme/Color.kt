@@ -1,4 +1,4 @@
-package com.example.device_linker.ui.theme
+package com.dlinker.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
