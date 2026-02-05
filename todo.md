@@ -15,6 +15,6 @@
 - [x] **環境初始化**：建立 Android 專案基礎結構。
 - [x] **硬體 ID 讀取**：實作基於 `ANDROID_ID` 的讀取邏輯。
 - [x] **金鑰生成器 (Refinement)**：將地址推導邏輯從 MainActivity 抽離至獨立模組，並引入 Android KeyStore。
-- [ ] **Firebase 整合**：於 App 內導入 Firebase SDK 並對接 Cloud Functions。
-- [ ] **UI 實作**：完成資產看板、收款 QR Code 顯示、以及掃描器功能。
-- [ ] **簽名引擎**：實作本地端離線簽名 (Offline Signing) 功能。
+- [x] **Firebase 整合**：於 App 內導入 Firebase SDK 並對接 Cloud Functions。
+- [x] **UI 實作**：完成資產看板、收款 QR Code 顯示、以及掃描器功能。
+- [x] **簽名引擎**：實作本地端離線簽名 (Offline Signing) 功能。

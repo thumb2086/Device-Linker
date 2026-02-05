@@ -1,4 +1,4 @@
-package com.example.device_linker.crypto
+package com.dlinker.app.crypto
 
 import android.util.Base64
 import org.web3j.crypto.Keys
