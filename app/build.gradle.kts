@@ -10,6 +10,18 @@ android {
     namespace = "com.dlinker.app"
     compileSdk = 34
 
+    signingConfigs {
+        create("release") {
+            val keystoreFile = project.findProperty("KEYSTORE_FILE") as String?
+            if (keystoreFile != null) {
+                storeFile = file(keystoreFile)
+                storePassword = project.findProperty("KEYSTORE_PASSWORD") as String? ?: ""
+                keyAlias = project.findProperty("KEY_ALIAS") as String? ?: ""
+                keyPassword = project.findProperty("KEY_PASSWORD") as String? ?: ""
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.dlinker.app"
         minSdk = 26
@@ -24,8 +36,24 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            packaging {
+                jniLibs {
+                    useLegacyPackaging = true
+                }
+            }
         }
     }
+
+    // 新增打包設定：剔除基準設定檔，解決 INSTALL_BASELINE_PROFILE_FAILED 錯誤
+    packaging {
+        resources {
+            excludes += "/META-INF/baseline-profiles/**"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -35,7 +63,9 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        dataBinding = true
         compose = true
+        buildConfig = true
     }
 }
 
@@ -45,7 +75,6 @@ dependencies {
     implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     
-    // Web3 & Crypto
     implementation("org.web3j:core:4.8.7-android")
     
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -57,21 +86,21 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     
-    // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.crashlytics)
     implementation(libs.firebase.functions)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.common)
 
-    // QR Code & Scanning
     implementation(libs.zxing.core)
     implementation(libs.zxing.android.embedded)
-    implementation(libs.mlkit.barcode.scanning)
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
+    
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.camera:camera-core:1.4.0")
+    implementation("androidx.camera:camera-camera2:1.4.0")
+    implementation("androidx.camera:camera-lifecycle:1.4.0")
+    implementation("androidx.camera:camera-view:1.4.0")
+
     implementation(libs.guava)
 
     testImplementation(libs.junit)

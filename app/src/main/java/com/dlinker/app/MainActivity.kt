@@ -27,14 +27,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import android.util.Base64
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.lifecycleScope
 import com.dlinker.app.crypto.KeyStoreManager
 import com.dlinker.app.crypto.QrCodeUtils
-import com.dlinker.app.crypto.deriveAddress
+import com.dlinker.app.crypto.getAddressFromPublicKey
 import com.dlinker.app.ui.theme.DeviceLinkerTheme
-import com.dlinker.app.FirebaseManager
 import com.dlinker.app.ui.ScannerView
-import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.firestore
 import com.google.firebase.Firebase
 import kotlinx.coroutines.launch
@@ -72,10 +69,16 @@ fun DeviceLinkerApp() {
     val scope = rememberCoroutineScope()
     val db = remember { Firebase.firestore }
 
-    val androidId = remember {
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+    // 統一使用 KeyStore 公鑰推導的地址，確保簽名與地址一致
+    val derivedAddress = remember {
+        try {
+            val pubKey = KeyStoreManager.getPublicKey()
+            getAddressFromPublicKey(pubKey)
+        } catch (e: Exception) {
+            Log.e("D-Linker", "Address derivation failed", e)
+            "0xError"
+        }
     }
-    val derivedAddress = remember(androidId) { deriveAddress(androidId) }
 
     var balance by remember { mutableStateOf("0.00") }
     var isLoading by remember { mutableStateOf(false) }
@@ -97,18 +100,22 @@ fun DeviceLinkerApp() {
 
     // 監聽 Firestore 餘額變動
     DisposableEffect(derivedAddress) {
-        val docRef = db.collection("users").document(derivedAddress)
-        val listener = docRef.addSnapshotListener { snapshot, e ->
-            if (e != null) {
-                Log.w("D-Linker", "Listen failed.", e)
-                return@addSnapshotListener
-            }
+        if (derivedAddress.startsWith("0x") && derivedAddress.length > 10) {
+            val docRef = db.collection("users").document(derivedAddress)
+            val listener = docRef.addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    Log.w("D-Linker", "Listen failed.", e)
+                    return@addSnapshotListener
+                }
 
-            if (snapshot != null && snapshot.exists()) {
-                balance = snapshot.getString("balance") ?: "0.00"
+                if (snapshot != null && snapshot.exists()) {
+                    balance = snapshot.getString("balance") ?: "0.00"
+                }
             }
+            onDispose { listener.remove() }
+        } else {
+            onDispose { }
         }
-        onDispose { listener.remove() }
     }
 
     Scaffold(
@@ -163,7 +170,6 @@ fun DeviceLinkerApp() {
             Spacer(modifier = Modifier.height(32.dp))
 
             // 領取禮包按鈕
-            // 領取禮包按鈕
             if (isLoading) {
                 CircularProgressIndicator()
                 Text("處理中...", modifier = Modifier.padding(top = 8.dp))
@@ -172,8 +178,11 @@ fun DeviceLinkerApp() {
                     onClick = {
                         scope.launch {
                             isLoading = true
-                            val publicKey = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
-                            val result = FirebaseManager.requestAirdrop(derivedAddress, publicKey)
+                            // 獲取 Base64 編碼的公鑰傳給後端備存
+                            val publicKeyStr = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
+                            // 產生簽名 (這裡簽署地址作為身份證明)
+                            val signature = KeyStoreManager.signData(derivedAddress.toByteArray())
+                            val result = FirebaseManager.requestAirdrop(derivedAddress, publicKeyStr, signature)
                             isLoading = false
 
                             result.onSuccess { msg ->
@@ -240,7 +249,7 @@ fun DeviceLinkerApp() {
                     isLoading = true
                     showTransferDialog = false
 
-                    // 執行離線簽名
+                    // 執行離線簽名：簽名內容需與後端 index.js 驗證邏輯一致
                     val message = "transfer:$destinationAddress:$amount"
                     val signature = KeyStoreManager.signData(message.toByteArray())
 

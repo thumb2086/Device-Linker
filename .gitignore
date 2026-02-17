@@ -17,3 +17,17 @@ local.properties
 # Firebase Functions
 functions/.env
 node_modules/
+firebase-debug.log
+firebase-debug.*.log
+.runtimeconfig.json
+
+# 密鑰與金鑰保護 (Keys & Keystores)
+*.jks
+*.keystore
+*.p12
+*.key
+google-services.json
+
+# 避免上傳加密相關的私鑰存儲
+/app/src/main/assets/keys/*
+/app/secret.properties
