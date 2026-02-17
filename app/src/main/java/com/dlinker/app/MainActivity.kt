@@ -2,7 +2,6 @@ package com.dlinker.app
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -32,8 +31,7 @@ import com.dlinker.app.crypto.QrCodeUtils
 import com.dlinker.app.crypto.getAddressFromPublicKey
 import com.dlinker.app.ui.theme.DeviceLinkerTheme
 import com.dlinker.app.ui.ScannerView
-import com.google.firebase.firestore.firestore
-import com.google.firebase.Firebase
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -67,9 +65,8 @@ class MainActivity : ComponentActivity() {
 fun DeviceLinkerApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val db = remember { Firebase.firestore }
 
-    // 統一使用 KeyStore 公鑰推導的地址，確保簽名與地址一致
+    // 統一使用 KeyStore 公鑰推導的地址
     val derivedAddress = remember {
         try {
             val pubKey = KeyStoreManager.getPublicKey()
@@ -88,6 +85,17 @@ fun DeviceLinkerApp() {
     var destinationAddress by remember { mutableStateOf("") }
     var showTransferDialog by remember { mutableStateOf(false) }
 
+    // 自動定時同步餘額 (代替 Firestore 監聽器以避開 Firebase SDK 異常)
+    LaunchedEffect(derivedAddress) {
+        if (derivedAddress.startsWith("0x") && derivedAddress.length > 10) {
+            while(true) {
+                val result = FirebaseManager.syncBalance(derivedAddress)
+                result.onSuccess { balance = it }
+                delay(30000) // 每 30 秒自動刷新一次
+            }
+        }
+    }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -95,26 +103,6 @@ fun DeviceLinkerApp() {
             showScanner = true
         } else {
             Toast.makeText(context, "需要相機權限才能掃描", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // 監聽 Firestore 餘額變動
-    DisposableEffect(derivedAddress) {
-        if (derivedAddress.startsWith("0x") && derivedAddress.length > 10) {
-            val docRef = db.collection("users").document(derivedAddress)
-            val listener = docRef.addSnapshotListener { snapshot, e ->
-                if (e != null) {
-                    Log.w("D-Linker", "Listen failed.", e)
-                    return@addSnapshotListener
-                }
-
-                if (snapshot != null && snapshot.exists()) {
-                    balance = snapshot.getString("balance") ?: "0.00"
-                }
-            }
-            onDispose { listener.remove() }
-        } else {
-            onDispose { }
         }
     }
 
@@ -126,7 +114,11 @@ fun DeviceLinkerApp() {
                     IconButton(onClick = {
                         scope.launch {
                             isLoading = true
-                            FirebaseManager.syncBalance(derivedAddress)
+                            val result = FirebaseManager.syncBalance(derivedAddress)
+                            result.onSuccess { 
+                                balance = it
+                                Toast.makeText(context, "餘額已更新", Toast.LENGTH_SHORT).show()
+                            }
                             isLoading = false
                         }
                     }) {
@@ -178,17 +170,23 @@ fun DeviceLinkerApp() {
                     onClick = {
                         scope.launch {
                             isLoading = true
-                            // 獲取 Base64 編碼的公鑰傳給後端備存
-                            val publicKeyStr = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
-                            // 產生簽名 (這裡簽署地址作為身份證明)
-                            val signature = KeyStoreManager.signData(derivedAddress.toByteArray())
-                            val result = FirebaseManager.requestAirdrop(derivedAddress, publicKeyStr, signature)
-                            isLoading = false
+                            try {
+                                val publicKeyStr = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
+                                val signature = KeyStoreManager.signData(derivedAddress.toByteArray())
+                                val result = FirebaseManager.requestAirdrop(derivedAddress, publicKeyStr, signature)
+                                isLoading = false
 
-                            result.onSuccess { msg ->
-                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                            }.onFailure { err ->
-                                Toast.makeText(context, "失敗: ${err.message}", Toast.LENGTH_LONG).show()
+                                result.onSuccess { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    // 領取成功後手動同步一次餘額
+                                    val balanceResult = FirebaseManager.syncBalance(derivedAddress)
+                                    balanceResult.onSuccess { balance = it }
+                                }.onFailure { err ->
+                                    Toast.makeText(context, "失敗: ${err.message}", Toast.LENGTH_LONG).show()
+                                }
+                            } catch (e: Exception) {
+                                isLoading = false
+                                Toast.makeText(context, "錯誤: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },
@@ -249,23 +247,27 @@ fun DeviceLinkerApp() {
                     isLoading = true
                     showTransferDialog = false
 
-                    // 執行離線簽名：簽名內容需與後端 index.js 驗證邏輯一致
-                    val message = "transfer:$destinationAddress:$amount"
-                    val signature = KeyStoreManager.signData(message.toByteArray())
+                    try {
+                        val message = "transfer:$destinationAddress:$amount"
+                        val signature = KeyStoreManager.signData(message.toByteArray())
 
-                    val result = FirebaseManager.transfer(
-                        from = derivedAddress,
-                        to = destinationAddress,
-                        amount = amount,
-                        signature = signature
-                    )
+                        val result = FirebaseManager.transfer(
+                            from = derivedAddress,
+                            to = destinationAddress,
+                            amount = amount,
+                            signature = signature
+                        )
 
-                    isLoading = false
-                    result.onSuccess { hash ->
-                        txHash = hash
-                        Toast.makeText(context, "轉帳成功！", Toast.LENGTH_LONG).show()
-                    }.onFailure { err ->
-                        Toast.makeText(context, "轉帳失敗: ${err.message}", Toast.LENGTH_LONG).show()
+                        isLoading = false
+                        result.onSuccess { hash ->
+                            txHash = hash
+                            Toast.makeText(context, "轉帳成功！", Toast.LENGTH_LONG).show()
+                        }.onFailure { err ->
+                            Toast.makeText(context, "轉帳失敗: ${err.message}", Toast.LENGTH_LONG).show()
+                        }
+                    } catch (e: Exception) {
+                        isLoading = false
+                        Toast.makeText(context, "轉帳異常: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
             }

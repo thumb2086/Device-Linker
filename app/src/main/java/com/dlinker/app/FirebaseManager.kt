@@ -1,122 +1,78 @@
 package com.dlinker.app
 
 import android.util.Log
-import com.google.firebase.functions.FirebaseFunctions
-import com.google.firebase.functions.functions
-import com.google.firebase.Firebase
-import com.google.firebase.functions.FirebaseFunctionsException
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 object FirebaseManager {
     private const val TAG = "FirebaseManager"
-    
-    // 初始化 Firebase Functions
-    private val functions: FirebaseFunctions by lazy {
-        val f = Firebase.functions
-        try {
-            // 修正：直接使用 BuildConfig.DEBUG 並確保其可用
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Connecting to Firebase Emulator (10.0.2.2:5001)...")
-                f.useEmulator("10.0.2.2", 5001)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to connect to emulator", e)
-        }
-        f
-    }
+    private const val VERCEL_BASE_URL = "https://device-linker-api.vercel.app/api/"
 
-    /**
-     * 向 Cloud Function 請求空投 (新手入金)
-     */
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
     suspend fun requestAirdrop(walletAddress: String, publicKey: String, signature: String): Result<String> {
-        val data = hashMapOf(
-            "address" to walletAddress,
-            "publicKey" to publicKey,
-            "signature" to signature
-        )
-
-        return try {
-            Log.d(TAG, "Calling requestAirdrop for address: $walletAddress")
-            
-            // 移除不支援的 setTimeout，使用預設的超時設定
-            val result = functions
-                .getHttpsCallable("requestAirdrop")
-                .call(data)
-                .await()
-
-            val response = result.data as Map<*, *>
-            val success = response["success"] as? Boolean ?: false
-            val message = response["message"] as? String ?: "未知錯誤"
-            
-            if (success) {
-                Result.success(message)
-            } else {
-                Result.failure(Exception(message))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in requestAirdrop", e)
-            if (e is FirebaseFunctionsException) {
-                Log.e(TAG, "Functions error code: ${e.code}, message: ${e.message}")
-            }
-            Result.failure(e)
-        }
+        return callVercel("airdrop", JSONObject().apply {
+            put("address", walletAddress)
+            put("publicKey", publicKey)
+            put("signature", signature)
+        })
     }
 
-    /**
-     * 手動請求餘額同步
-     */
     suspend fun syncBalance(walletAddress: String): Result<String> {
-        val data = hashMapOf("address" to walletAddress)
-
-        return try {
-            Log.d(TAG, "Calling syncBalance for address: $walletAddress")
-            
-            val result = functions
-                .getHttpsCallable("syncBalance")
-                .call(data)
-                .await()
-
-            val response = result.data as Map<*, *>
-            val balance = response["balance"] as? String ?: "0"
-            Result.success(balance)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in syncBalance", e)
-            Result.failure(e)
+        val result = callVercel("get-balance", JSONObject().apply {
+            put("address", walletAddress)
+        })
+        return result.mapCatching { 
+            val json = JSONObject(it)
+            if (json.has("balance")) json.getString("balance")
+            else throw Exception(json.optString("message", "未知餘額錯誤"))
         }
     }
 
-    /**
-     * 發起轉帳交易
-     */
     suspend fun transfer(from: String, to: String, amount: String, signature: String): Result<String> {
-        val data = hashMapOf(
-            "from" to from,
-            "to" to to,
-            "amount" to amount,
-            "signature" to signature
-        )
+        return callVercel("transfer", JSONObject().apply {
+            put("from", from)
+            put("to", to)
+            put("amount", amount)
+            put("signature", signature)
+        })
+    }
 
-        return try {
-            Log.d(TAG, "Calling transfer from: $from to: $to")
-            
-            val result = functions
-                .getHttpsCallable("transfer")
-                .call(data)
-                .await()
+    private suspend fun callVercel(endpoint: String, json: JSONObject): Result<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = VERCEL_BASE_URL + endpoint
+                Log.d(TAG, "📡 Sending to: $url")
 
-            val response = result.data as Map<*, *>
-            val success = response["success"] as? Boolean ?: false
-            val message = response["message"] as? String ?: "未知錯誤"
-            val txHash = response["txHash"] as? String ?: ""
+                val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder().url(url).post(body).build()
 
-            if (success) {
-                Result.success(txHash)
-            } else {
-                Result.failure(Exception(message))
+                client.newCall(request).execute().use { response ->
+                    val responseData = response.body?.string() ?: ""
+                    Log.d(TAG, "📥 Response ($endpoint): ${response.code}")
+                    
+                    if (response.isSuccessful) {
+                        Result.success(responseData)
+                    } else {
+                        // 💡 增強：解析 Vercel 的 details 欄位
+                        val errorDetails = try { JSONObject(responseData).optString("details", "") } catch (e: Exception) { "" }
+                        Log.e(TAG, "Vercel Error: $responseData")
+                        Result.failure(Exception("Vercel 請求失敗: $errorDetails"))
+                    }
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in transfer", e)
-            Result.failure(e)
         }
     }
 }

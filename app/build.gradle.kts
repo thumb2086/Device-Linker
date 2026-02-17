@@ -47,13 +47,6 @@ android {
         }
     }
 
-    // 新增打包設定：剔除基準設定檔，解決 INSTALL_BASELINE_PROFILE_FAILED 錯誤
-    packaging {
-        resources {
-            excludes += "/META-INF/baseline-profiles/**"
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -70,10 +63,14 @@ android {
 }
 
 dependencies {
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    
+    // OkHttp 用於呼叫 Vercel API
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     implementation("org.web3j:core:4.8.7-android")
     
@@ -88,7 +85,8 @@ dependencies {
     
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.crashlytics)
-    implementation(libs.firebase.functions)
+    // 移除 firebase-functions，改用 OkHttp
+    // implementation(libs.firebase.functions)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.common)
 
