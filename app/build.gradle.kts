@@ -2,8 +2,6 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    alias(libs.plugins.google.gms.google.services)
-    alias(libs.plugins.google.firebase.crashlytics)
 }
 
 android {
@@ -82,13 +80,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
-    
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.crashlytics)
-    // 移除 firebase-functions，改用 OkHttp
-    // implementation(libs.firebase.functions)
-    implementation(libs.firebase.firestore)
-    implementation(libs.firebase.common)
 
     implementation(libs.zxing.core)
     implementation(libs.zxing.android.embedded)
