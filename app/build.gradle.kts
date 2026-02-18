@@ -10,12 +10,16 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystoreFile = project.findProperty("KEYSTORE_FILE") as String?
-            if (keystoreFile != null) {
+            val keystoreFile = project.findProperty("KEYSTORE_FILE") as? String
+            val storePassword = project.findProperty("KEYSTORE_PASSWORD") as? String
+            val keyAliasValue = project.findProperty("KEY_ALIAS") as? String
+            val keyPassword = project.findProperty("KEY_PASSWORD") as? String
+
+            if (!keystoreFile.isNullOrBlank() && !keyAliasValue.isNullOrBlank()) {
                 storeFile = file(keystoreFile)
-                storePassword = project.findProperty("KEYSTORE_PASSWORD") as String? ?: ""
-                keyAlias = project.findProperty("KEY_ALIAS") as String? ?: ""
-                keyPassword = project.findProperty("KEY_PASSWORD") as String? ?: ""
+                this.storePassword = storePassword
+                this.keyAlias = keyAliasValue
+                this.keyPassword = keyPassword
             }
         }
     }
