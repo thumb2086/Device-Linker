@@ -7,7 +7,7 @@ const crypto = require("crypto");
 admin.initializeApp();
 const db = admin.firestore();
 
-const CONTRACT_ADDRESS = "0x531aa0c02ee61bfdaf2077356293f2550a969142";
+const CONTRACT_ADDRESS = "0xDA11C453C3F8351Dc2184456c278e37e6fF8d0C4";
 const RPC_URL = "https://sepolia.base.org";
 
 async function updateUserBalance(address) {
