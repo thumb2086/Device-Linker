@@ -1,16 +1,7 @@
-const admin = require("firebase-admin");
+const { ethers } = require("ethers");
 
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        })
-    });
-}
-
-const db = admin.firestore();
+const CONTRACT_ADDRESS = "0x531aa0c02ee61bfdaf2077356293f2550a969142";
+const RPC_URL = "https://sepolia.base.org";
 
 module.exports = async (req, res) => {
     if (req.method !== 'POST') {
@@ -19,17 +10,25 @@ module.exports = async (req, res) => {
 
     const { address } = req.body;
 
-    if (!address) {
-        return res.status(400).json({ success: false, message: 'Missing wallet address' });
+    if (!address || !ethers.isAddress(address)) {
+        return res.status(400).json({ success: false, message: '無效的錢包地址' });
     }
 
     try {
-        const userDoc = await db.collection('users').doc(address).get();
-        if (!userDoc.exists) {
-            return res.status(200).json({ success: true, balance: "0" });
-        }
-        const balance = userDoc.data().balance || "0";
-        return res.status(200).json({ success: true, balance: balance });
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, [
+            "function balanceOf(address account) external view returns (uint256)"
+        ], provider);
+
+        // 直接從區塊鏈查詢餘額
+        const balanceWei = await contract.balanceOf(address);
+        const balance = ethers.formatUnits(balanceWei, 18);
+
+        return res.status(200).json({
+            success: true,
+            balance: balance,
+            source: "blockchain"
+        });
     } catch (error) {
         console.error("Get Balance Error:", error);
         return res.status(500).json({ success: false, message: error.message });

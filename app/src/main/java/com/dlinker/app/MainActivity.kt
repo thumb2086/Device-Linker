@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import android.util.Base64
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import com.dlinker.app.crypto.KeyStoreManager
 import com.dlinker.app.crypto.QrCodeUtils
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
 fun DeviceLinkerApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val tokenSymbol = stringResource(id = R.string.token_symbol)
 
     // 統一使用 KeyStore 公鑰推導的地址
     val derivedAddress = remember {
@@ -85,7 +87,7 @@ fun DeviceLinkerApp() {
     var destinationAddress by remember { mutableStateOf("") }
     var showTransferDialog by remember { mutableStateOf(false) }
 
-    // 自動定時同步餘額 (代替 Firestore 監聽器以避開 Firebase SDK 異常)
+    // 自動定時同步餘額
     LaunchedEffect(derivedAddress) {
         if (derivedAddress.startsWith("0x") && derivedAddress.length > 10) {
             while(true) {
@@ -136,7 +138,7 @@ fun DeviceLinkerApp() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 資產看板
-            AssetCard(balance = balance, address = derivedAddress)
+            AssetCard(balance = balance, address = derivedAddress, symbol = tokenSymbol)
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -174,14 +176,20 @@ fun DeviceLinkerApp() {
                                 val publicKeyStr = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
                                 val signature = KeyStoreManager.signData(derivedAddress.toByteArray())
                                 val result = FirebaseManager.requestAirdrop(derivedAddress, publicKeyStr, signature)
-                                isLoading = false
 
                                 result.onSuccess { msg ->
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                    // 領取成功後手動同步一次餘額
-                                    val balanceResult = FirebaseManager.syncBalance(derivedAddress)
-                                    balanceResult.onSuccess { balance = it }
+                                    Toast.makeText(context, "交易已送出，等待區塊鏈打包...", Toast.LENGTH_LONG).show()
+                                    
+                                    // 💡 重要修改：區塊鏈打包需要時間，我們在 5 秒與 10 秒後各嘗試刷新一次
+                                    launch {
+                                        delay(5000)
+                                        FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                                        delay(5000)
+                                        FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                                        isLoading = false // 全部結束後才關閉 Loading
+                                    }
                                 }.onFailure { err ->
+                                    isLoading = false
                                     Toast.makeText(context, "失敗: ${err.message}", Toast.LENGTH_LONG).show()
                                 }
                             } catch (e: Exception) {
@@ -193,7 +201,7 @@ fun DeviceLinkerApp() {
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("領取 100 DLINK 測試幣", fontSize = 16.sp)
+                    Text("領取 100 $tokenSymbol 測試幣", fontSize = 16.sp)
                 }
             }
 
@@ -241,6 +249,7 @@ fun DeviceLinkerApp() {
     if (showTransferDialog) {
         TransferDialog(
             toAddress = destinationAddress,
+            symbol = tokenSymbol,
             onDismiss = { showTransferDialog = false },
             onConfirm = { amount ->
                 scope.launch {
@@ -262,6 +271,11 @@ fun DeviceLinkerApp() {
                         result.onSuccess { hash ->
                             txHash = hash
                             Toast.makeText(context, "轉帳成功！", Toast.LENGTH_LONG).show()
+                            // 轉帳後同樣延遲刷新餘額
+                            launch {
+                                delay(5000)
+                                FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                            }
                         }.onFailure { err ->
                             Toast.makeText(context, "轉帳失敗: ${err.message}", Toast.LENGTH_LONG).show()
                         }
@@ -276,7 +290,7 @@ fun DeviceLinkerApp() {
 }
 
 @Composable
-fun TransferDialog(toAddress: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+fun TransferDialog(toAddress: String, symbol: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var amount by remember { mutableStateOf("10") }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -299,7 +313,7 @@ fun TransferDialog(toAddress: String, onDismiss: () -> Unit, onConfirm: (String)
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("金額 (DLINK)") },
+                    label = { Text("金額 ($symbol)") },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -375,7 +389,7 @@ fun ReceiptDialog(address: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun AssetCard(balance: String, address: String) {
+fun AssetCard(balance: String, address: String, symbol: String) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -391,7 +405,7 @@ fun AssetCard(balance: String, address: String) {
         ) {
             Column {
                 Text("我的資產", fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
-                Text("$balance DLINK", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("$balance $symbol", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
             Column {

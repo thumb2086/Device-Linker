@@ -1,12 +1,12 @@
 # 📜 D-Linker 開發日誌
 
 ---
-## [2026-02-05] Fix: Signing Configuration & Build Dependencies
+## [2026-02-18] Architecture Update: On-chain Data Drive
 **執行內容 (Path A: Bug Fix):**
-- **簽名問題**: 識別到 Release Build 因缺失 `signingConfigs` 導致失敗。
-- **編譯修復**: 針對 `FirebaseManager.kt` 中 `BuildConfig` 與 `setTimeout` 的紅字問題，確認為 Build 中斷導致的代碼生成失效。
-- **解決方案**: 提供 `build.gradle.kts` 簽名模板，並建議切換至 `debug` 模式以恢復開發流程。
+- **餘額查詢**: 發現 `get-balance.js` 讀取 Firestore 導致數據滯後，已重寫為直接透過 RPC 查詢合約 `balanceOf`。
+- **一致性**: 徹底解決「鏈上有錢但 App 顯示 0.0」的脫節問題。
+- **路徑對齊**: 確認 Android 端已對齊 `request-airdrop` 端點。
 
 ---
-## [2026-02-05] Deeper Analysis: Firestore API Disabled & Deployment Confirmation
+## [2026-02-18] Fix: Airdrop API Endpoint Mismatch & Stability Update
 ... (後續內容保持不變)

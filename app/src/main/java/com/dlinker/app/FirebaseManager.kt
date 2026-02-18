@@ -21,6 +21,7 @@ object FirebaseManager {
         .build()
 
     suspend fun requestAirdrop(walletAddress: String, publicKey: String, signature: String): Result<String> {
+        // 根據截圖，正確的端點是 airdrop
         return callVercel("airdrop", JSONObject().apply {
             put("address", walletAddress)
             put("publicKey", publicKey)
@@ -64,10 +65,21 @@ object FirebaseManager {
                     if (response.isSuccessful) {
                         Result.success(responseData)
                     } else {
-                        // 💡 增強：解析 Vercel 的 details 欄位
-                        val errorDetails = try { JSONObject(responseData).optString("details", "") } catch (e: Exception) { "" }
-                        Log.e(TAG, "Vercel Error: $responseData")
-                        Result.failure(Exception("Vercel 請求失敗: $errorDetails"))
+                        val errorMessage = try {
+                            val errorJson = JSONObject(responseData)
+                            val details = errorJson.optString("error", "")
+                            when {
+                                response.code == 404 -> "API 找不到 ($endpoint)。"
+                                details.contains("already known") -> "交易已在處理中"
+                                details.contains("insufficient funds") -> "金庫餘額不足"
+                                else -> errorJson.optString("message", "伺服器錯誤: ${response.code}")
+                            }
+                        } catch (e: Exception) {
+                            "連線伺服器失敗 (${response.code})"
+                        }
+                        
+                        Log.e(TAG, "Vercel Error Body: $responseData")
+                        Result.failure(Exception(errorMessage))
                     }
                 }
             } catch (e: Exception) {
