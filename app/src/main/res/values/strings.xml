@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">D-Linker</string>
-    <string name="contract_address">0xDA11C453C3F8351Dc2184456c278e37e6fF8d0C4</string>
-    <string name="token_symbol">子熙幣 V2</string>
+    <string name="contract_address">0xE3D9af5f15857Cb01E0614fA281fcc3256F62050</string>
+    <string name="token_symbol">子熙幣</string>
 </resources>

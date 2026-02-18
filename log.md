@@ -1,12 +1,14 @@
 # 📜 D-Linker 開發日誌
 
 ---
-## [2026-02-18] Architecture Update: On-chain Data Drive
-**執行內容 (Path A: Bug Fix):**
-- **餘額查詢**: 發現 `get-balance.js` 讀取 Firestore 導致數據滯後，已重寫為直接透過 RPC 查詢合約 `balanceOf`。
-- **一致性**: 徹底解決「鏈上有錢但 App 顯示 0.0」的脫節問題。
-- **路徑對齊**: 確認 Android 端已對齊 `request-airdrop` 端點。
+## [2026-02-18] Security & Protocol Update: Transfer with Public Key
+**執行內容 (Path B: Protocol Upgrade):**
+- **協議升級**: 修改 `FirebaseManager.transfer`，現在會額外傳送 `publicKey` (Base64) 給後端。
+- **簽名對象加固**: 
+    - 使用 `BigDecimal` 確保金額字串無 `.0` 或科學記號。
+    - 強制執行 `trim()` 與 `lowercase()` 以排除不可見字元與大小寫不一致。
+- **演算法同步**: Android 端全面切換至 `SHA256withECDSA`，順應硬體 TEE 行為。
 
 ---
-## [2026-02-18] Fix: Airdrop API Endpoint Mismatch & Stability Update
+## [2026-02-18] Architecture Update: On-chain Data Drive
 ... (後續內容保持不變)
