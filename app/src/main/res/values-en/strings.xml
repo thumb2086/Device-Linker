@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">D-Linker</string>
-    <string name="token_symbol">DLT</string>
+    <string name="token_symbol">ZHIXI</string>
+    <string name="token_full_name">ZhiXi Coin</string>
 
     <string name="loading">Loading...</string>
     <string name="app_dashboard_title">D-Linker Dashboard</string>
@@ -34,8 +35,8 @@
 
     <string name="settings">Settings</string>
     <string name="language_settings">Language Settings</string>
-    <string name="lang_auto">System Default (Auto)</string>
-    <string name="lang_zh_tw">Traditional Chinese (繁體中文)</string>
-    <string name="lang_zh_cn">Simplified Chinese (简体中文)</string>
-    <string name="lang_en">English (英文)</string>
+    <string name="lang_auto">System Default</string>
+    <string name="lang_zh_tw">繁體中文</string>
+    <string name="lang_zh_cn">简体中文</string>
+    <string name="lang_en">English</string>
 </resources>
