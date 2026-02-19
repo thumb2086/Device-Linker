@@ -335,15 +335,15 @@ fun HistoryScreen(onBack: () -> Unit) {
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (historyList.isEmpty() && !isHistoryLoading) {
                 Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
+                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(Modifier.height(16.dp))
-                    Text(stringResource(R.string.tx_no_history), color = Color.Gray)
+                    Text(stringResource(R.string.tx_no_history), color = MaterialTheme.colorScheme.outline)
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), state = listState) {
                     items(historyList) { item ->
                         HistoryRow(item, tokenSymbol)
-                        HorizontalDivider(thickness = 0.5.dp, color = Color.LightGray)
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                     }
                     if (isHistoryLoading) {
                         item { CircularProgressIndicator(modifier = Modifier.fillMaxWidth().padding(16.dp).wrapContentWidth(Alignment.CenterHorizontally)) }
@@ -358,16 +358,16 @@ fun HistoryScreen(onBack: () -> Unit) {
 fun HistoryRow(item: HistoryItem, symbol: String) {
     val isSend = item.type == "send"
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(modifier = Modifier.size(40.dp).background(if (isSend) Color(0xFFFFEBEE) else Color(0xFFE8F5E9), CircleShape), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(40.dp).background(if (isSend) Color(0xFFFFEBEE).copy(alpha = if(isSystemInDarkTheme()) 0.2f else 1f) else Color(0xFFE8F5E9).copy(alpha = if(isSystemInDarkTheme()) 0.2f else 1f), CircleShape), contentAlignment = Alignment.Center) {
             Icon(if (isSend) Icons.Default.NorthEast else Icons.Default.SouthWest, contentDescription = null, tint = if (isSend) Color.Red else Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(if (isSend) stringResource(R.string.tx_send) else stringResource(R.string.tx_receive), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Text(item.counterParty, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(item.date, fontSize = 10.sp, color = Color.LightGray)
+            Text(item.counterParty, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.date, fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
         }
-        Text((if (isSend) "-" else "+") + " ${item.amount} $symbol", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = if (isSend) Color.Black else Color(0xFF2E7D32))
+        Text((if (isSend) "-" else "+") + " ${item.amount} $symbol", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = if (isSend) MaterialTheme.colorScheme.onSurface else Color(0xFF4CAF50))
     }
 }
 
@@ -429,7 +429,7 @@ fun TransferDialog(toAddress: String, symbol: String, isMigration: Boolean, amou
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(if(isMigration) stringResource(R.string.migration_title) else stringResource(R.string.send_symbol, symbol), fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.to_address, toAddress), fontSize = 10.sp, color = Color.Gray)
+                Text(stringResource(R.string.to_address, toAddress), fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                 if (isMigration) { Spacer(Modifier.height(8.dp)); Text(stringResource(R.string.migration_desc), fontSize = 12.sp); Spacer(Modifier.height(8.dp)) }
                 OutlinedTextField(value = amountInput, onValueChange = { if (!isMigration) amountInput = it }, readOnly = isMigration, label = { Text(stringResource(R.string.amount)) }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -492,4 +492,9 @@ private fun setAppLocale(context: Context, languageTag: String) {
         val appLocale = if (languageTag.isEmpty()) LocaleListCompat.getEmptyLocaleList() else LocaleListCompat.forLanguageTags(languageTag)
         AppCompatDelegate.setApplicationLocales(appLocale)
     }
+}
+
+@Composable
+fun isSystemInDarkTheme(): Boolean {
+    return androidx.compose.foundation.isSystemInDarkTheme()
 }
