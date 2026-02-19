@@ -51,7 +51,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-// 修改為繼承 AppCompatActivity 以支援相容性 Locale 切換
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -176,6 +175,7 @@ fun DeviceLinkerApp() {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ActionButton(stringResource(R.string.receive), Icons.Default.AccountBalanceWallet) { showReceiptDialog = true }
                 ActionButton(stringResource(R.string.scan), Icons.Default.QrCodeScanner) { 
+                    isMigrationMode = false // 一般掃描默認為普通轉帳
                     when (PackageManager.PERMISSION_GRANTED) {
                         ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> showScanner = true
                         else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -226,7 +226,14 @@ fun DeviceLinkerApp() {
     if (showAddressInputDialog) {
         AddressInputDialog(
             isMigration = isMigrationMode,
-            onDismiss = { showAddressInputDialog = false }
+            onDismiss = { showAddressInputDialog = false },
+            onScanRequest = {
+                showAddressInputDialog = false
+                when (PackageManager.PERMISSION_GRANTED) {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> showScanner = true
+                    else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                }
+            }
         ) { addr ->
             destinationAddress = addr.trim()
             showAddressInputDialog = false
@@ -309,7 +316,12 @@ fun ActionButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVe
 }
 
 @Composable
-fun AddressInputDialog(isMigration: Boolean, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+fun AddressInputDialog(
+    isMigration: Boolean, 
+    onDismiss: () -> Unit, 
+    onScanRequest: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
     var input by remember { mutableStateOf("") }
     val title = if (isMigration) stringResource(R.string.migration) else stringResource(R.string.manual_address_input)
     Dialog(onDismissRequest = onDismiss) {
@@ -320,6 +332,11 @@ fun AddressInputDialog(isMigration: Boolean, onDismiss: () -> Unit, onConfirm: (
                     value = input, 
                     onValueChange = { input = it }, 
                     label = { Text(stringResource(R.string.address_placeholder)) },
+                    trailingIcon = {
+                        IconButton(onClick = onScanRequest) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR Code")
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -357,7 +374,7 @@ fun TransferDialog(
                 OutlinedTextField(
                     value = amountInput, 
                     onValueChange = { if (!isMigration) amountInput = it }, 
-                    readOnly = isMigration, // 在遷移模式下不允許修改金額
+                    readOnly = isMigration,
                     label = { Text(stringResource(R.string.amount)) },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                 )

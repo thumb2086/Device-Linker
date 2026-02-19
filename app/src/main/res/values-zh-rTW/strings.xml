@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">D-Linker</string>
-    <string name="token_symbol">ZHIXI</string>
+    <string name="token_symbol">子熙幣</string>
     <string name="token_full_name">子熙幣</string>
 
     <string name="loading">載入中...</string>
@@ -35,8 +35,8 @@
 
     <string name="settings">設定</string>
     <string name="language_settings">語言設定</string>
-    <string name="lang_auto">跟隨系統 (Auto)</string>
-    <string name="lang_zh_tw">繁體中文 (Traditional Chinese)</string>
-    <string name="lang_zh_cn">簡體中文 (Simplified Chinese)</string>
-    <string name="lang_en">英文 (English)</string>
+    <string name="lang_auto">跟隨系統</string>
+    <string name="lang_zh_tw">繁體中文</string>
+    <string name="lang_zh_cn">簡體中文</string>
+    <string name="lang_en">English</string>
 </resources>
