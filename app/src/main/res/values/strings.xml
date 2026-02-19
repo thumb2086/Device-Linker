@@ -10,6 +10,7 @@
     <string name="device_wallet_address">設備錢包地址</string>
     <string name="copy_success">複製成功</string>
     <string name="receive">收款</string>
+    <string name="wallet_auth">錢包授權</string>
     <string name="scan">掃描</string>
     <string name="transfer">轉帳</string>
     <string name="migration">設備轉移</string>
@@ -44,4 +45,14 @@
     <string name="tx_send">轉出</string>
     <string name="tx_receive">轉入</string>
     <string name="tx_no_history">目前尚無交易紀錄</string>
+
+    <string name="auth_confirm_title">授權登入請求</string>
+    <string name="auth_confirm_desc">網頁端請求連結您的錢包。\n\nSession ID: %1$s\n地址: %2$s</string>
+    <string name="auth_confirm_button">確認授權</string>
+    <string name="auth_success">授權成功</string>
+
+    <string name="bet_confirm_title">下注簽名請求</string>
+    <string name="bet_confirm_desc">您正在進行 %1$s 遊戲下注。\n\n選擇: %2$s\n金額: %3$s %4$s</string>
+    <string name="bet_confirm_button">確認下注並簽名</string>
+    <string name="bet_success">下注請求已送出</string>
 </resources>

@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,6 +181,10 @@ fun DashboardScreen(
     var showTransferDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
 
+    // 用於確認對話框的狀態
+    var showAuthConfirm by remember { mutableStateOf<String?>(null) }
+    var showBetConfirm by remember { mutableStateOf<Triple<String, String, String>?>(null) } // gameId, side, amount
+
     LaunchedEffect(initialAddress) {
         if (initialAddress.isNotEmpty()) {
             destinationAddress = initialAddress
@@ -241,6 +246,10 @@ fun DashboardScreen(
             Spacer(modifier = Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ActionButton(stringResource(R.string.receive), Icons.Default.AccountBalanceWallet) { showReceiptDialog = true }
+                ActionButton(stringResource(R.string.wallet_auth), Icons.Default.QrCodeScanner) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) showScanner = true
+                    else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                }
                 ActionButton(stringResource(R.string.transfer), Icons.AutoMirrored.Filled.Send) { 
                     onIsMigrationChange(false)
                     showAddressInputDialog = true 
@@ -321,14 +330,87 @@ fun DashboardScreen(
     }
     if (showReceiptDialog) ReceiptDialog(address = derivedAddress) { showReceiptDialog = false }
     if (showSettingsDialog) SettingsDialog(onDismiss = { showSettingsDialog = false })
+    
+    // 登入授權確認對話框
+    showAuthConfirm?.let { sessionId ->
+        AlertDialog(
+            onDismissRequest = { showAuthConfirm = null },
+            title = { Text(stringResource(R.string.auth_confirm_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.auth_confirm_desc, sessionId, derivedAddress)) },
+            confirmButton = {
+                Button(onClick = {
+                    val sid = sessionId
+                    showAuthConfirm = null
+                    scope.launch {
+                        isLoading = true
+                        try {
+                            val pubKey = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
+                            DLinkerApi.sendAuth(sid, derivedAddress, pubKey).onSuccess {
+                                Toast.makeText(context, context.getString(R.string.auth_success), Toast.LENGTH_SHORT).show()
+                            }.onFailure {
+                                Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show()
+                            }
+                        } finally { isLoading = false }
+                    }
+                }) { Text(stringResource(R.string.auth_confirm_button)) }
+            },
+            dismissButton = { TextButton(onClick = { showAuthConfirm = null }) { Text(stringResource(R.string.cancel)) } }
+        )
+    }
+
+    // 下注簽名確認對話框
+    showBetConfirm?.let { betData ->
+        AlertDialog(
+            onDismissRequest = { showBetConfirm = null },
+            title = { Text(stringResource(R.string.bet_confirm_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.bet_confirm_desc, "Coin Flip", betData.second, betData.third, tokenSymbol)) },
+            confirmButton = {
+                Button(onClick = {
+                    val (gameId, side, amount) = betData
+                    showBetConfirm = null
+                    scope.launch {
+                        isLoading = true
+                        try {
+                            val signMsg = "coinflip:$side:$amount"
+                            val signature = KeyStoreManager.signData(signMsg.toByteArray(Charsets.UTF_8))
+                            val pubKey = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
+                            DLinkerApi.sendCoinFlip(gameId, derivedAddress, side, amount, signature, pubKey).onSuccess {
+                                Toast.makeText(context, context.getString(R.string.bet_success), Toast.LENGTH_SHORT).show()
+                            }.onFailure {
+                                Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show()
+                            }
+                        } finally { isLoading = false }
+                    }
+                }) { Text(stringResource(R.string.bet_confirm_button)) }
+            },
+            dismissButton = { TextButton(onClick = { showBetConfirm = null }) { Text(stringResource(R.string.cancel)) } }
+        )
+    }
+
     if (showScanner) {
         Dialog(onDismissRequest = { showScanner = false }) {
             Card(modifier = Modifier.fillMaxWidth().height(450.dp)) {
                 Column {
                     Box(modifier = Modifier.weight(1f)) {
                         ScannerView(onScan = { raw ->
-                            destinationAddress = raw.trim().takeLast(42)
-                            showScanner = false; showTransferDialog = true
+                            showScanner = false
+                            val data = raw.trim()
+                            
+                            when {
+                                data.startsWith("dlinker:login:") -> {
+                                    showAuthConfirm = data.substringAfter("dlinker:login:")
+                                }
+                                data.startsWith("dlinker:coinflip:") -> {
+                                    val parts = data.split(":")
+                                    if (parts.size >= 5) {
+                                        showBetConfirm = Triple(parts[2], parts[3], parts[4])
+                                    }
+                                }
+                                else -> {
+                                    destinationAddress = data.takeLast(42)
+                                    showTransferDialog = true
+                                }
+                            }
                         })
                     }
                     Button({ showScanner = false }, Modifier.fillMaxWidth().padding(8.dp)) { Text(stringResource(R.string.close)) }

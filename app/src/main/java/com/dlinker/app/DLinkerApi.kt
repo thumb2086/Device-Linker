@@ -38,6 +38,50 @@ object DLinkerApi {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 1. 登入授權請求 (Auth)
+     * 觸發時機：掃描到 dlinker:login:session_123
+     */
+    suspend fun sendAuth(sessionId: String, address: String, publicKey: String): Result<String> {
+        val result = callVercel("auth", JSONObject().apply {
+            put("sessionId", sessionId)
+            put("address", address.lowercase(Locale.ROOT))
+            put("publicKey", publicKey)
+        })
+        return result.mapCatching {
+            val json = JSONObject(it)
+            if (json.optBoolean("success", false)) "Auth Success"
+            else throw Exception(json.optString("error", "授權失敗"))
+        }
+    }
+
+    /**
+     * 2. 下注賭博請求 (Coin Flip)
+     * 觸發時機：App 決定下注，並簽名了訊息
+     */
+    suspend fun sendCoinFlip(
+        gameId: String,
+        address: String,
+        side: String,
+        amount: String,
+        signature: String,
+        publicKey: String
+    ): Result<String> {
+        val result = callVercel("coinflip", JSONObject().apply {
+            put("gameId", gameId)
+            put("address", address.lowercase(Locale.ROOT))
+            put("side", side)
+            put("amount", amount)
+            put("signature", signature)
+            put("publicKey", publicKey)
+        })
+        return result.mapCatching {
+            val json = JSONObject(it)
+            if (json.optBoolean("success", false)) "Bet Placed"
+            else throw Exception(json.optString("error", "下注失敗"))
+        }
+    }
+
     suspend fun requestAirdrop(walletAddress: String, publicKey: String, signature: String): Result<String> {
         val result = callVercel("airdrop", JSONObject().apply {
             put("address", walletAddress.lowercase(Locale.ROOT))
