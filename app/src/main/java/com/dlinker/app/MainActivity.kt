@@ -23,11 +23,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -56,6 +60,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
+// 定義導航狀態
+enum class Screen { Dashboard, History }
+
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,7 +78,13 @@ class MainActivity : AppCompatActivity() {
         setContent {
             DeviceLinkerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    DeviceLinkerApp()
+                    var currentScreen by remember { mutableStateOf(Screen.Dashboard) }
+                    
+                    if (currentScreen == Screen.Dashboard) {
+                        DashboardScreen(onNavigateToHistory = { currentScreen = Screen.History })
+                    } else {
+                        HistoryScreen(onBack = { currentScreen = Screen.Dashboard })
+                    }
                 }
             }
         }
@@ -81,7 +94,7 @@ class MainActivity : AppCompatActivity() {
 @SuppressLint("HardwareIds")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeviceLinkerApp() {
+fun DashboardScreen(onNavigateToHistory: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tokenSymbol = stringResource(id = R.string.token_symbol)
@@ -96,22 +109,14 @@ fun DeviceLinkerApp() {
     var showTransferDialog by remember { mutableStateOf(false) }
     var isMigrationMode by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
-    
-    // 歷史紀錄狀態
-    var historyList by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
-    var isHistoryLoading by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (isGranted) {
-            showScanner = true
-        } else {
-            Toast.makeText(context, context.getString(R.string.camera_permission_required), Toast.LENGTH_SHORT).show()
-        }
+        if (isGranted) showScanner = true
+        else Toast.makeText(context, context.getString(R.string.camera_permission_required), Toast.LENGTH_SHORT).show()
     }
 
-    // 初始化與定期同步
     LaunchedEffect(Unit) {
         val addr = withContext(Dispatchers.IO) {
             try {
@@ -120,47 +125,10 @@ fun DeviceLinkerApp() {
             } catch (e: Exception) { "0xError" }
         }
         derivedAddress = addr
-
         if (addr.startsWith("0x") && addr.length > 10) {
             while(true) {
-                FirebaseManager.syncBalance(addr).onSuccess { balance = it }
-                // 同步歷史紀錄
-                isHistoryLoading = true
-                FirebaseManager.getHistory(addr).onSuccess { historyList = it }
-                isHistoryLoading = false
+                DLinkerApi.syncBalance(addr).onSuccess { balance = it }
                 delay(15000)
-            }
-        }
-    }
-
-    val transferFn: (String, String) -> Unit = { toAddr, amountStr ->
-        scope.launch {
-            isLoading = true
-            try {
-                withContext(Dispatchers.IO) {
-                    val cleanTo = toAddr.trim().lowercase(Locale.ROOT).replace("0x", "")
-                    val cleanFrom = derivedAddress.trim().lowercase(Locale.ROOT)
-                    val cleanAmount = amountStr.trim().replace(".0", "")
-                    val messageToSign = "transfer:$cleanTo:$cleanAmount"
-                    val bytesToSign = messageToSign.toByteArray(Charsets.UTF_8)
-                    val signature = KeyStoreManager.signData(bytesToSign)
-                    val pubKeyBase64 = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
-
-                    FirebaseManager.transfer(cleanFrom, toAddr.trim(), amountStr.trim(), signature, pubKeyBase64)
-                        .onSuccess { 
-                            withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() }
-                            delay(5000)
-                            FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
-                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
-                        }
-                        .onFailure {
-                            withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show() }
-                        }
-                }
-            } finally { 
-                isLoading = false
-                showTransferDialog = false
-                isMigrationMode = false
             }
         }
     }
@@ -173,14 +141,11 @@ fun DeviceLinkerApp() {
                     IconButton(onClick = {
                         scope.launch {
                             isLoading = true
-                            FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
-                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
+                            DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
                             isLoading = false
                         }
-                    }) { Icon(Icons.Default.Refresh, null) }
-                    IconButton(onClick = { showSettingsDialog = true }) { 
-                        Icon(Icons.Default.Settings, stringResource(R.string.settings)) 
-                    }
+                    }) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
+                    IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
                 }
             )
         }
@@ -191,7 +156,7 @@ fun DeviceLinkerApp() {
             Spacer(modifier = Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ActionButton(stringResource(R.string.receive), Icons.Default.AccountBalanceWallet) { showReceiptDialog = true }
-                ActionButton(stringResource(R.string.transfer), Icons.Default.Send) { 
+                ActionButton(stringResource(R.string.transfer), Icons.AutoMirrored.Filled.Send) { 
                     isMigrationMode = false
                     showAddressInputDialog = true 
                 }
@@ -200,11 +165,10 @@ fun DeviceLinkerApp() {
                     showAddressInputDialog = true
                 }
             }
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(32.dp))
             
-            // 領取測試幣按鈕
             if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 16.dp))
             } else {
                 Button(
                     onClick = {
@@ -215,77 +179,70 @@ fun DeviceLinkerApp() {
                                     val pubKey = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
                                     val cleanAddr = derivedAddress.trim().lowercase(Locale.ROOT)
                                     val signature = KeyStoreManager.signData(cleanAddr.toByteArray(Charsets.UTF_8))
-                                    
-                                    FirebaseManager.requestAirdrop(cleanAddr, pubKey, signature)
-                                        .onSuccess { 
-                                            withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.airdrop_request_sent), Toast.LENGTH_SHORT).show() }
-                                            delay(5000)
-                                            FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
-                                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
+                                    DLinkerApi.requestAirdrop(cleanAddr, pubKey, signature).onSuccess { 
+                                        withContext(Dispatchers.Main) { 
+                                            Toast.makeText(context, context.getString(R.string.airdrop_request_sent), Toast.LENGTH_SHORT).show() 
                                         }
-                                        .onFailure {
-                                            withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show() }
-                                        }
+                                        delay(3000)
+                                        DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
+                                    }
                                 }
                             } finally { isLoading = false }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(bottom = 16.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) { Text(stringResource(R.string.request_test_coins, tokenSymbol)) }
             }
-            
-            Spacer(modifier = Modifier.height(32.dp))
-            
-            // 交易紀錄列表
-            Text(stringResource(R.string.transaction_history), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            if (isHistoryLoading && historyList.isEmpty()) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            } else if (historyList.isEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.tx_no_history), color = Color.Gray)
-                }
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    items(historyList) { item ->
-                        HistoryRow(item, tokenSymbol)
-                        Divider(modifier = Modifier.padding(vertical = 8.dp), thickness = 0.5.dp, color = Color.LightGray)
-                    }
+
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onNavigateToHistory() },
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.History, contentDescription = "History", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(stringResource(R.string.transaction_history), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
             }
+
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 
-    // 對話框邏輯
     if (showAddressInputDialog) {
-        AddressInputDialog(
-            isMigration = isMigrationMode,
-            onDismiss = { showAddressInputDialog = false },
+        AddressInputDialog(isMigration = isMigrationMode, onDismiss = { showAddressInputDialog = false },
             onScanRequest = {
                 showAddressInputDialog = false
-                when (PackageManager.PERMISSION_GRANTED) {
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> showScanner = true
-                    else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                }
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) showScanner = true
+                else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
-        ) { addr ->
-            destinationAddress = addr.trim()
-            showAddressInputDialog = false
-            showTransferDialog = true
-        }
+        ) { addr -> destinationAddress = addr; showAddressInputDialog = false; showTransferDialog = true }
     }
     if (showTransferDialog) {
-        val amountToTransfer = if(isMigrationMode) balance else "10"
-        TransferDialog(
-            toAddress = destinationAddress, 
-            symbol = tokenSymbol, 
-            isMigration = isMigrationMode,
-            amount = amountToTransfer,
-            onDismiss = { showTransferDialog = false }
-        ) { amountInput ->
-            transferFn(destinationAddress, amountInput)
+        TransferDialog(toAddress = destinationAddress, symbol = tokenSymbol, isMigration = isMigrationMode, 
+            amount = if(isMigrationMode) balance else "10", onDismiss = { showTransferDialog = false }) { amountInput ->
+            scope.launch {
+                isLoading = true
+                try {
+                    withContext(Dispatchers.IO) {
+                        val cleanTo = destinationAddress.trim().lowercase(Locale.ROOT).replace("0x", "")
+                        val cleanFrom = derivedAddress.trim().lowercase(Locale.ROOT)
+                        val messageToSign = "transfer:$cleanTo:${amountInput.trim().replace(".0", "")}"
+                        val signature = KeyStoreManager.signData(messageToSign.toByteArray(Charsets.UTF_8))
+                        val pubKeyBase64 = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
+
+                        DLinkerApi.transfer(cleanFrom, destinationAddress.trim(), amountInput.trim(), signature, pubKeyBase64)
+                            .onSuccess { 
+                                withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() }
+                                delay(5000)
+                                DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
+                            }
+                    }
+                } finally { isLoading = false; showTransferDialog = false; isMigrationMode = false }
+            }
         }
     }
     if (showReceiptDialog) ReceiptDialog(address = derivedAddress) { showReceiptDialog = false }
@@ -295,17 +252,101 @@ fun DeviceLinkerApp() {
             Card(modifier = Modifier.fillMaxWidth().height(450.dp)) {
                 Column {
                     Box(modifier = Modifier.weight(1f)) {
-                        ScannerView(onScan = { raw ->
-                            val addr = raw.trim().takeLast(42)
-                            if (addr.startsWith("0x")) {
-                                destinationAddress = addr
-                                showScanner = false
-                                showTransferDialog = true
-                            }
+                        ScannerView(onScan = { raw -> 
+                            destinationAddress = raw.trim().takeLast(42)
+                            showScanner = false
+                            showTransferDialog = true 
                         })
                     }
-                    Button(onClick = { showScanner = false }, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                        Text(stringResource(R.string.close))
+                    Button({ showScanner = false }, Modifier.fillMaxWidth().padding(8.dp)) { Text(stringResource(R.string.close)) }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryScreen(onBack: () -> Unit) {
+    val tokenSymbol = stringResource(id = R.string.token_symbol)
+    val scope = rememberCoroutineScope()
+    
+    var historyList by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var isHistoryLoading by remember { mutableStateOf(false) }
+    var currentPage by remember { mutableIntStateOf(1) }
+    var hasMoreData by remember { mutableStateOf(true) }
+    val listState = rememberLazyListState()
+    var walletAddress by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val addr = withContext(Dispatchers.IO) { getAddressFromPublicKey(KeyStoreManager.getPublicKey()) }
+        walletAddress = addr
+        isHistoryLoading = true
+        DLinkerApi.getHistory(addr, page = 1).onSuccess { 
+            historyList = it.history
+            currentPage = 2
+            hasMoreData = it.hasMore
+        }
+        isHistoryLoading = false
+    }
+
+    val shouldLoadMore = remember {
+        derivedStateOf {
+            val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            lastVisibleItem != null && lastVisibleItem.index >= listState.layoutInfo.totalItemsCount - 3
+        }
+    }
+    
+    LaunchedEffect(shouldLoadMore.value) {
+        if (shouldLoadMore.value && hasMoreData && !isHistoryLoading && walletAddress.isNotEmpty()) {
+            isHistoryLoading = true
+            DLinkerApi.getHistory(walletAddress, page = currentPage).onSuccess {
+                historyList = historyList + it.history
+                currentPage++
+                hasMoreData = it.hasMore
+            }
+            isHistoryLoading = false
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.transaction_history), fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            isHistoryLoading = true
+                            DLinkerApi.getHistory(walletAddress, page = 1).onSuccess { 
+                                historyList = it.history
+                                currentPage = 2
+                                hasMoreData = it.hasMore
+                            }
+                            isHistoryLoading = false
+                        }
+                    }) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
+                }
+            )
+        }
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (historyList.isEmpty() && !isHistoryLoading) {
+                Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
+                    Spacer(Modifier.height(16.dp))
+                    Text(stringResource(R.string.tx_no_history), color = Color.Gray)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), state = listState) {
+                    items(historyList) { item ->
+                        HistoryRow(item, tokenSymbol)
+                        HorizontalDivider(thickness = 0.5.dp, color = Color.LightGray)
+                    }
+                    if (isHistoryLoading) {
+                        item { CircularProgressIndicator(modifier = Modifier.fillMaxWidth().padding(16.dp).wrapContentWidth(Alignment.CenterHorizontally)) }
                     }
                 }
             }
@@ -316,76 +357,38 @@ fun DeviceLinkerApp() {
 @Composable
 fun HistoryRow(item: HistoryItem, symbol: String) {
     val isSend = item.type == "send"
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 圖示
-        Box(
-            modifier = Modifier.size(40.dp).background(
-                if (isSend) Color(0xFFFFEBEE) else Color(0xFFE8F5E9),
-                CircleShape
-            ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                if (isSend) Icons.Default.NorthEast else Icons.Default.SouthWest,
-                contentDescription = null,
-                tint = if (isSend) Color.Red else Color(0xFF4CAF50),
-                modifier = Modifier.size(20.dp)
-            )
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(40.dp).background(if (isSend) Color(0xFFFFEBEE) else Color(0xFFE8F5E9), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(if (isSend) Icons.Default.NorthEast else Icons.Default.SouthWest, contentDescription = null, tint = if (isSend) Color.Red else Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
         }
-        
-        Spacer(modifier = Modifier.width(12.dp))
-        
-        // 資訊
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                if (isSend) stringResource(R.string.tx_send) else stringResource(R.string.tx_receive),
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Text(
-                if (isSend) "To: ${item.to}" else "From: ${item.from}",
-                fontSize = 11.sp,
-                color = Color.Gray,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(if (isSend) stringResource(R.string.tx_send) else stringResource(R.string.tx_receive), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(item.counterParty, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.date, fontSize = 10.sp, color = Color.LightGray)
         }
-        
-        // 金額
-        Text(
-            (if (isSend) "-" else "+") + " ${item.amount} $symbol",
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 14.sp,
-            color = if (isSend) Color.Black else Color(0xFF2E7D32)
-        )
+        Text((if (isSend) "-" else "+") + " ${item.amount} $symbol", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = if (isSend) Color.Black else Color(0xFF2E7D32))
     }
 }
 
 @Composable
 fun AssetCard(balance: String, address: String, symbol: String) {
     val context = LocalContext.current
-    Card(
-        modifier = Modifier.fillMaxWidth().height(180.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth().height(180.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text(stringResource(R.string.my_assets), fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
                 Text(stringResource(R.string.balance_format, balance, symbol), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
             Column {
-                Text(stringResource(R.string.device_wallet_address), fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f))
+                Text(stringResource(R.string.device_wallet_address), fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(address, fontSize = 10.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     IconButton(onClick = {
                         val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cb.setPrimaryClip(ClipData.newPlainText("Wallet", address))
                         Toast.makeText(context, context.getString(R.string.copy_success), Toast.LENGTH_SHORT).show()
-                    }, modifier = Modifier.size(24.dp)) { Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp)) }
+                    }, modifier = Modifier.size(24.dp)) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp)) }
                 }
             }
         }
@@ -395,37 +398,21 @@ fun AssetCard(balance: String, address: String, symbol: String) {
 @Composable
 fun ActionButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        FilledIconButton(onClick = onClick, modifier = Modifier.size(56.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(icon, null, modifier = Modifier.size(24.dp))
-        }
+        FilledIconButton(onClick = onClick, modifier = Modifier.size(56.dp), shape = RoundedCornerShape(16.dp)) { Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp)) }
         Text(text, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
 @Composable
-fun AddressInputDialog(
-    isMigration: Boolean, 
-    onDismiss: () -> Unit, 
-    onScanRequest: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
+fun AddressInputDialog(isMigration: Boolean, onDismiss: () -> Unit, onScanRequest: () -> Unit, onConfirm: (String) -> Unit) {
     var input by remember { mutableStateOf("") }
-    val title = if (isMigration) stringResource(R.string.migration) else stringResource(R.string.manual_address_input)
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Text(title, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = input, 
-                    onValueChange = { input = it }, 
-                    label = { Text(stringResource(R.string.address_placeholder)) },
-                    trailingIcon = {
-                        IconButton(onClick = onScanRequest) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                )
+                Text(if (isMigration) stringResource(R.string.migration) else stringResource(R.string.manual_address_input), fontWeight = FontWeight.Bold)
+                OutlinedTextField(value = input, onValueChange = { input = it }, label = { Text(stringResource(R.string.address_placeholder)) },
+                    trailingIcon = { IconButton(onClick = onScanRequest) { Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan") } },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onDismiss) { Text(stringResource(R.string.cancel)) }
                     Button({ onConfirm(input.trim()) }) { Text(stringResource(R.string.confirm)) }
@@ -436,38 +423,18 @@ fun AddressInputDialog(
 }
 
 @Composable
-fun TransferDialog(
-    toAddress: String, 
-    symbol: String, 
-    isMigration: Boolean,
-    amount: String,
-    onDismiss: () -> Unit, 
-    onConfirm: (String) -> Unit
-) {
+fun TransferDialog(toAddress: String, symbol: String, isMigration: Boolean, amount: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var amountInput by remember { mutableStateOf(amount) }
-    val title = if(isMigration) stringResource(R.string.migration_title) else stringResource(R.string.send_symbol, symbol)
-    val confirmText = if(isMigration) stringResource(R.string.migration_confirm) else stringResource(R.string.confirm_send)
-
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Text(title, fontWeight = FontWeight.Bold)
+                Text(if(isMigration) stringResource(R.string.migration_title) else stringResource(R.string.send_symbol, symbol), fontWeight = FontWeight.Bold)
                 Text(stringResource(R.string.to_address, toAddress), fontSize = 10.sp, color = Color.Gray)
-                if (isMigration) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.migration_desc), fontSize = 12.sp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                OutlinedTextField(
-                    value = amountInput, 
-                    onValueChange = { if (!isMigration) amountInput = it }, 
-                    readOnly = isMigration,
-                    label = { Text(stringResource(R.string.amount)) },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                )
+                if (isMigration) { Spacer(Modifier.height(8.dp)); Text(stringResource(R.string.migration_desc), fontSize = 12.sp); Spacer(Modifier.height(8.dp)) }
+                OutlinedTextField(value = amountInput, onValueChange = { if (!isMigration) amountInput = it }, readOnly = isMigration, label = { Text(stringResource(R.string.amount)) }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onDismiss) { Text(stringResource(R.string.cancel)) }
-                    Button({ onConfirm(amountInput) }) { Text(confirmText) }
+                    Button({ onConfirm(amountInput) }) { Text(if(isMigration) stringResource(R.string.migration_confirm) else stringResource(R.string.confirm_send)) }
                 }
             }
         }
@@ -481,9 +448,14 @@ fun ReceiptDialog(address: String, onDismiss: () -> Unit) {
             Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(stringResource(R.string.receive_address), fontWeight = FontWeight.Bold)
                 val qr = remember(address) { QrCodeUtils.generateQrCode(address, 500) }
-                qr?.let { androidx.compose.foundation.Image(it.asImageBitmap(), null, modifier = Modifier.size(200.dp)) }
-                Text(address, fontSize = 10.sp)
-                Button(onDismiss, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.close)) }
+                if (qr != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = qr.asImageBitmap(),
+                        contentDescription = "QR Code",
+                        modifier = Modifier.size(200.dp)
+                    )
+                }
+                Text(address, fontSize = 10.sp); Button(onDismiss, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.close)) }
             }
         }
     }
@@ -492,24 +464,16 @@ fun ReceiptDialog(address: String, onDismiss: () -> Unit) {
 @Composable
 fun SettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Column(modifier = Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
                 Text(stringResource(R.string.settings), fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(stringResource(R.string.language_settings), fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(8.dp))
-                
+                Spacer(Modifier.height(16.dp)); Text(stringResource(R.string.language_settings), fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(8.dp))
                 LanguageOption(stringResource(R.string.lang_auto), "") { setAppLocale(context, "") }
                 LanguageOption(stringResource(R.string.lang_zh_tw), "zh-TW") { setAppLocale(context, "zh-TW") }
                 LanguageOption(stringResource(R.string.lang_zh_cn), "zh-CN") { setAppLocale(context, "zh-CN") }
                 LanguageOption(stringResource(R.string.lang_en), "en") { setAppLocale(context, "en") }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onDismiss, modifier = Modifier.align(Alignment.End)) {
-                    Text(stringResource(R.string.close))
-                }
+                Spacer(Modifier.height(16.dp)); Button(onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.close)) }
             }
         }
     }
@@ -517,29 +481,15 @@ fun SettingsDialog(onDismiss: () -> Unit) {
 
 @Composable
 fun LanguageOption(label: String, tag: String, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 12.dp),
-        color = Color.Transparent
-    ) {
-        Text(label, fontSize = 16.sp)
-    }
+    Surface(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 12.dp), color = Color.Transparent) { Text(label, fontSize = 16.sp) }
 }
 
 private fun setAppLocale(context: Context, languageTag: String) {
-    Log.d("LocaleChange", "Setting locale to: $languageTag")
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val localeManager = context.getSystemService(LocaleManager::class.java)
-        if (languageTag.isEmpty()) {
-            localeManager.applicationLocales = LocaleList.getEmptyLocaleList()
-        } else {
-            localeManager.applicationLocales = LocaleList.forLanguageTags(languageTag)
-        }
+        localeManager?.applicationLocales = if (languageTag.isEmpty()) LocaleList.getEmptyLocaleList() else LocaleList.forLanguageTags(languageTag)
     } else {
-        val appLocale: LocaleListCompat = if (languageTag.isEmpty()) {
-            LocaleListCompat.getEmptyLocaleList()
-        } else {
-            LocaleListCompat.forLanguageTags(languageTag)
-        }
+        val appLocale = if (languageTag.isEmpty()) LocaleListCompat.getEmptyLocaleList() else LocaleListCompat.forLanguageTags(languageTag)
         AppCompatDelegate.setApplicationLocales(appLocale)
     }
 }

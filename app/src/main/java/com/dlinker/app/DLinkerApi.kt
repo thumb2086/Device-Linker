@@ -7,22 +7,29 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import java.util.Locale
 
 data class HistoryItem(
     val type: String,
-    val from: String,
-    val to: String,
     val amount: String,
-    val blockNumber: Int,
-    val txHash: String
+    val counterParty: String,
+    val timestamp: Long,
+    val date: String,
+    val txHash: String,
+    val blockNumber: String = ""
 )
 
-object FirebaseManager {
-    private const val TAG = "FirebaseManager"
+data class HistoryResponse(
+    val success: Boolean,
+    val page: Int,
+    val hasMore: Boolean,
+    val history: List<HistoryItem>
+)
+
+object DLinkerApi {
+    private const val TAG = "DLinkerApi"
     private const val VERCEL_BASE_URL = "https://device-linker-api.vercel.app/api/"
 
     private val client = OkHttpClient.Builder()
@@ -78,9 +85,11 @@ object FirebaseManager {
         }
     }
 
-    suspend fun getHistory(walletAddress: String): Result<List<HistoryItem>> {
+    suspend fun getHistory(walletAddress: String, page: Int = 1, limit: Int = 20): Result<HistoryResponse> {
         val result = callVercel("history", JSONObject().apply {
             put("address", walletAddress.lowercase(Locale.ROOT))
+            put("page", page)
+            put("limit", limit)
         })
         return result.mapCatching { data ->
             val json = JSONObject(data)
@@ -90,15 +99,21 @@ object FirebaseManager {
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
                     list.add(HistoryItem(
-                        type = obj.getString("type"),
-                        from = obj.getString("from"),
-                        to = obj.getString("to"),
-                        amount = obj.getString("amount"),
-                        blockNumber = obj.getInt("blockNumber"),
-                        txHash = obj.getString("txHash")
+                        type = obj.optString("type", "unknown"),
+                        amount = obj.optString("amount", "0"),
+                        counterParty = obj.optString("counterParty", "0x..."),
+                        timestamp = obj.optLong("timestamp", 0),
+                        date = obj.optString("date", ""),
+                        txHash = obj.optString("txHash", ""),
+                        blockNumber = obj.optString("blockNumber", "")
                     ))
                 }
-                list
+                HistoryResponse(
+                    success = true,
+                    page = json.optInt("page", 1),
+                    hasMore = json.optBoolean("hasMore", false),
+                    history = list
+                )
             } else {
                 throw Exception(json.optString("error", "無法取得紀錄"))
             }
