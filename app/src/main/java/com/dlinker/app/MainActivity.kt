@@ -18,9 +18,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -34,6 +38,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -91,6 +96,10 @@ fun DeviceLinkerApp() {
     var showTransferDialog by remember { mutableStateOf(false) }
     var isMigrationMode by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    
+    // 歷史紀錄狀態
+    var historyList by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var isHistoryLoading by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -102,6 +111,7 @@ fun DeviceLinkerApp() {
         }
     }
 
+    // 初始化與定期同步
     LaunchedEffect(Unit) {
         val addr = withContext(Dispatchers.IO) {
             try {
@@ -114,7 +124,11 @@ fun DeviceLinkerApp() {
         if (addr.startsWith("0x") && addr.length > 10) {
             while(true) {
                 FirebaseManager.syncBalance(addr).onSuccess { balance = it }
-                delay(10000)
+                // 同步歷史紀錄
+                isHistoryLoading = true
+                FirebaseManager.getHistory(addr).onSuccess { historyList = it }
+                isHistoryLoading = false
+                delay(15000)
             }
         }
     }
@@ -137,6 +151,7 @@ fun DeviceLinkerApp() {
                             withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() }
                             delay(5000)
                             FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
                         }
                         .onFailure {
                             withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show() }
@@ -159,6 +174,7 @@ fun DeviceLinkerApp() {
                         scope.launch {
                             isLoading = true
                             FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
                             isLoading = false
                         }
                     }) { Icon(Icons.Default.Refresh, null) }
@@ -169,18 +185,12 @@ fun DeviceLinkerApp() {
             )
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+            Spacer(modifier = Modifier.height(16.dp))
             AssetCard(balance = balance, address = derivedAddress, symbol = tokenSymbol)
             Spacer(modifier = Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ActionButton(stringResource(R.string.receive), Icons.Default.AccountBalanceWallet) { showReceiptDialog = true }
-                ActionButton(stringResource(R.string.scan), Icons.Default.QrCodeScanner) { 
-                    isMigrationMode = false // 一般掃描默認為普通轉帳
-                    when (PackageManager.PERMISSION_GRANTED) {
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> showScanner = true
-                        else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                    }
-                }
                 ActionButton(stringResource(R.string.transfer), Icons.Default.Send) { 
                     isMigrationMode = false
                     showAddressInputDialog = true 
@@ -190,9 +200,12 @@ fun DeviceLinkerApp() {
                     showAddressInputDialog = true
                 }
             }
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
-            if (isLoading) CircularProgressIndicator() else {
+            // 領取測試幣按鈕
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else {
                 Button(
                     onClick = {
                         scope.launch {
@@ -208,6 +221,7 @@ fun DeviceLinkerApp() {
                                             withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.airdrop_request_sent), Toast.LENGTH_SHORT).show() }
                                             delay(5000)
                                             FirebaseManager.syncBalance(derivedAddress).onSuccess { balance = it }
+                                            FirebaseManager.getHistory(derivedAddress).onSuccess { historyList = it }
                                         }
                                         .onFailure {
                                             withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show() }
@@ -216,13 +230,35 @@ fun DeviceLinkerApp() {
                             } finally { isLoading = false }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) { Text(stringResource(R.string.request_test_coins, tokenSymbol)) }
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            // 交易紀錄列表
+            Text(stringResource(R.string.transaction_history), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            if (isHistoryLoading && historyList.isEmpty()) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else if (historyList.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.tx_no_history), color = Color.Gray)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    items(historyList) { item ->
+                        HistoryRow(item, tokenSymbol)
+                        Divider(modifier = Modifier.padding(vertical = 8.dp), thickness = 0.5.dp, color = Color.LightGray)
+                    }
+                }
             }
         }
     }
 
+    // 對話框邏輯
     if (showAddressInputDialog) {
         AddressInputDialog(
             isMigration = isMigrationMode,
@@ -278,27 +314,78 @@ fun DeviceLinkerApp() {
 }
 
 @Composable
+fun HistoryRow(item: HistoryItem, symbol: String) {
+    val isSend = item.type == "send"
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 圖示
+        Box(
+            modifier = Modifier.size(40.dp).background(
+                if (isSend) Color(0xFFFFEBEE) else Color(0xFFE8F5E9),
+                CircleShape
+            ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (isSend) Icons.Default.NorthEast else Icons.Default.SouthWest,
+                contentDescription = null,
+                tint = if (isSend) Color.Red else Color(0xFF4CAF50),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        
+        Spacer(modifier = Modifier.width(12.dp))
+        
+        // 資訊
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (isSend) stringResource(R.string.tx_send) else stringResource(R.string.tx_receive),
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+            Text(
+                if (isSend) "To: ${item.to}" else "From: ${item.from}",
+                fontSize = 11.sp,
+                color = Color.Gray,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        
+        // 金額
+        Text(
+            (if (isSend) "-" else "+") + " ${item.amount} $symbol",
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 14.sp,
+            color = if (isSend) Color.Black else Color(0xFF2E7D32)
+        )
+    }
+}
+
+@Composable
 fun AssetCard(balance: String, address: String, symbol: String) {
     val context = LocalContext.current
     Card(
-        modifier = Modifier.fillMaxWidth().height(200.dp),
+        modifier = Modifier.fillMaxWidth().height(180.dp),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text(stringResource(R.string.my_assets), fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
-                Text(stringResource(R.string.balance_format, balance, symbol), fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text(stringResource(R.string.balance_format, balance, symbol), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
             Column {
-                Text(stringResource(R.string.device_wallet_address), fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f))
+                Text(stringResource(R.string.device_wallet_address), fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(address, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text(address, fontSize = 10.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     IconButton(onClick = {
                         val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cb.setPrimaryClip(ClipData.newPlainText("Wallet", address))
                         Toast.makeText(context, context.getString(R.string.copy_success), Toast.LENGTH_SHORT).show()
-                    }) { Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(16.dp)) }
+                    }, modifier = Modifier.size(24.dp)) { Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp)) }
                 }
             }
         }
@@ -308,10 +395,10 @@ fun AssetCard(balance: String, address: String, symbol: String) {
 @Composable
 fun ActionButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        FilledIconButton(onClick = onClick, modifier = Modifier.size(60.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(icon, null, modifier = Modifier.size(28.dp))
+        FilledIconButton(onClick = onClick, modifier = Modifier.size(56.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(icon, null, modifier = Modifier.size(24.dp))
         }
-        Text(text, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        Text(text, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -334,7 +421,7 @@ fun AddressInputDialog(
                     label = { Text(stringResource(R.string.address_placeholder)) },
                     trailingIcon = {
                         IconButton(onClick = onScanRequest) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR Code")
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan")
                         }
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)

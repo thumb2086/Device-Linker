@@ -39,4 +39,9 @@
     <string name="lang_zh_tw">繁體中文</string>
     <string name="lang_zh_cn">簡體中文</string>
     <string name="lang_en">English</string>
+
+    <string name="transaction_history">交易紀錄</string>
+    <string name="tx_send">轉出</string>
+    <string name="tx_receive">轉入</string>
+    <string name="tx_no_history">目前尚無交易紀錄</string>
 </resources>

@@ -7,9 +7,19 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+
+data class HistoryItem(
+    val type: String,
+    val from: String,
+    val to: String,
+    val amount: String,
+    val blockNumber: Int,
+    val txHash: String
+)
 
 object FirebaseManager {
     private const val TAG = "FirebaseManager"
@@ -64,6 +74,33 @@ object FirebaseManager {
                 json.getString("txHash")
             } else {
                 throw Exception(json.optString("error", "轉帳失敗"))
+            }
+        }
+    }
+
+    suspend fun getHistory(walletAddress: String): Result<List<HistoryItem>> {
+        val result = callVercel("history", JSONObject().apply {
+            put("address", walletAddress.lowercase(Locale.ROOT))
+        })
+        return result.mapCatching { data ->
+            val json = JSONObject(data)
+            if (json.optBoolean("success", false)) {
+                val array = json.getJSONArray("history")
+                val list = mutableListOf<HistoryItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(HistoryItem(
+                        type = obj.getString("type"),
+                        from = obj.getString("from"),
+                        to = obj.getString("to"),
+                        amount = obj.getString("amount"),
+                        blockNumber = obj.getInt("blockNumber"),
+                        txHash = obj.getString("txHash")
+                    ))
+                }
+                list
+            } else {
+                throw Exception(json.optString("error", "無法取得紀錄"))
             }
         }
     }
