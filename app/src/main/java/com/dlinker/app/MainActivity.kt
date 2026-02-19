@@ -13,6 +13,7 @@ import android.os.LocaleList
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -83,6 +84,8 @@ class MainActivity : AppCompatActivity() {
                     if (currentScreen == Screen.Dashboard) {
                         DashboardScreen(onNavigateToHistory = { currentScreen = Screen.History })
                     } else {
+                        // 處理系統返回鍵：在歷史紀錄頁面時，返回 Dashboard
+                        BackHandler { currentScreen = Screen.Dashboard }
                         HistoryScreen(onBack = { currentScreen = Screen.Dashboard })
                     }
                 }
@@ -183,7 +186,7 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
                                         withContext(Dispatchers.Main) { 
                                             Toast.makeText(context, context.getString(R.string.airdrop_request_sent), Toast.LENGTH_SHORT).show() 
                                         }
-                                        delay(3000)
+                                        delay(1000)
                                         DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
                                     }
                                 }
@@ -226,6 +229,7 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
             amount = if(isMigrationMode) balance else "10", onDismiss = { showTransferDialog = false }) { amountInput ->
             scope.launch {
                 isLoading = true
+                showTransferDialog = false // 立即關閉對話框，避免使用者等待
                 try {
                     withContext(Dispatchers.IO) {
                         val cleanTo = destinationAddress.trim().lowercase(Locale.ROOT).replace("0x", "")
@@ -236,12 +240,14 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
 
                         DLinkerApi.transfer(cleanFrom, destinationAddress.trim(), amountInput.trim(), signature, pubKeyBase64)
                             .onSuccess { 
-                                withContext(Dispatchers.Main) { Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() }
-                                delay(5000)
+                                withContext(Dispatchers.Main) { 
+                                    Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() 
+                                }
+                                delay(2000)
                                 DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
                             }
                     }
-                } finally { isLoading = false; showTransferDialog = false; isMigrationMode = false }
+                } finally { isLoading = false; isMigrationMode = false }
             }
         }
     }
