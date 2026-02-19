@@ -50,6 +50,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.coroutineScope
+import androidx.work.*
 import com.dlinker.app.crypto.KeyStoreManager
 import com.dlinker.app.crypto.QrCodeUtils
 import com.dlinker.app.crypto.getAddressFromPublicKey
@@ -60,6 +61,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 // 定義導航狀態
 enum class Screen { Dashboard, History }
@@ -76,6 +78,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 初始化背景餘額檢查任務
+        setupBalanceCheckWorker()
+
         setContent {
             DeviceLinkerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -91,6 +96,42 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun setupBalanceCheckWorker() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val balanceWorkRequest = PeriodicWorkRequestBuilder<BalanceCheckWorker>(
+            15, TimeUnit.MINUTES,
+            5, TimeUnit.MINUTES
+        )
+        .setConstraints(constraints)
+        .build()
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "BalanceUpdateCheck",
+            ExistingPeriodicWorkPolicy.KEEP,
+            balanceWorkRequest
+        )
+    }
+}
+
+// 統一的餘額更新與通知函數
+private suspend fun updateBalanceAndNotify(context: Context, address: String, onUpdate: (String) -> Unit) {
+    DLinkerApi.syncBalance(address).onSuccess { newBalanceStr ->
+        val newBalance = newBalanceStr.toDoubleOrNull() ?: 0.0
+        val sharedPrefs = context.getSharedPreferences("DLinkerPrefs", Context.MODE_PRIVATE)
+        val lastBalanceStr = sharedPrefs.getString("last_known_balance", "0.0") ?: "0.0"
+        val lastBalance = lastBalanceStr.toDoubleOrNull() ?: 0.0
+
+        if (newBalance > lastBalance) {
+            NotificationHelper.sendBalanceNotification(context, newBalance - lastBalance, newBalance)
+        }
+        
+        onUpdate(newBalanceStr)
+        sharedPrefs.edit().putString("last_known_balance", newBalanceStr).apply()
     }
 }
 
@@ -113,6 +154,12 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
     var isMigrationMode by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) Toast.makeText(context, "請手動開啟通知權限以接收餘額變動提醒", Toast.LENGTH_LONG).show()
+    }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -121,6 +168,12 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         val addr = withContext(Dispatchers.IO) {
             try {
                 val pubKey = KeyStoreManager.getPublicKey()
@@ -128,9 +181,16 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
             } catch (e: Exception) { "0xError" }
         }
         derivedAddress = addr
+        
         if (addr.startsWith("0x") && addr.length > 10) {
+            DLinkerApi.syncBalance(addr).onSuccess { 
+                balance = it
+                context.getSharedPreferences("DLinkerPrefs", Context.MODE_PRIVATE)
+                    .edit().putString("last_known_balance", it).apply()
+            }
+
             while(true) {
-                DLinkerApi.syncBalance(addr).onSuccess { balance = it }
+                updateBalanceAndNotify(context, addr) { balance = it }
                 delay(15000)
             }
         }
@@ -144,7 +204,7 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
                     IconButton(onClick = {
                         scope.launch {
                             isLoading = true
-                            DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
+                            updateBalanceAndNotify(context, derivedAddress) { balance = it }
                             isLoading = false
                         }
                     }) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
@@ -186,8 +246,8 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
                                         withContext(Dispatchers.Main) { 
                                             Toast.makeText(context, context.getString(R.string.airdrop_request_sent), Toast.LENGTH_SHORT).show() 
                                         }
-                                        delay(1000)
-                                        DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
+                                        delay(2000)
+                                        updateBalanceAndNotify(context, derivedAddress) { balance = it }
                                     }
                                 }
                             } finally { isLoading = false }
@@ -229,7 +289,7 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
             amount = if(isMigrationMode) balance else "10", onDismiss = { showTransferDialog = false }) { amountInput ->
             scope.launch {
                 isLoading = true
-                showTransferDialog = false // 立即關閉對話框，避免使用者等待
+                showTransferDialog = false
                 try {
                     withContext(Dispatchers.IO) {
                         val cleanTo = destinationAddress.trim().lowercase(Locale.ROOT).replace("0x", "")
@@ -243,8 +303,8 @@ fun DashboardScreen(onNavigateToHistory: () -> Unit) {
                                 withContext(Dispatchers.Main) { 
                                     Toast.makeText(context, context.getString(R.string.transfer_success), Toast.LENGTH_LONG).show() 
                                 }
-                                delay(2000)
-                                DLinkerApi.syncBalance(derivedAddress).onSuccess { balance = it }
+                                delay(3000)
+                                updateBalanceAndNotify(context, derivedAddress) { balance = it }
                             }
                     }
                 } finally { isLoading = false; isMigrationMode = false }
@@ -277,7 +337,7 @@ fun HistoryScreen(onBack: () -> Unit) {
     val tokenSymbol = stringResource(id = R.string.token_symbol)
     val scope = rememberCoroutineScope()
     
-    var historyList by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var historyList by remember { mutableStateOf<List<HistoryItem>>(emptyOfList()) }
     var isHistoryLoading by remember { mutableStateOf(false) }
     var currentPage by remember { mutableIntStateOf(1) }
     var hasMoreData by remember { mutableStateOf(true) }
@@ -504,3 +564,5 @@ private fun setAppLocale(context: Context, languageTag: String) {
 fun isSystemInDarkTheme(): Boolean {
     return androidx.compose.foundation.isSystemInDarkTheme()
 }
+
+fun <T> emptyOfList(): List<T> = emptyList()

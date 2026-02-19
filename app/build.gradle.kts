@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp") // 新增 KSP 用於 Room
 }
 
 android {
@@ -54,7 +55,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     
-    // 遷移至最新的 compilerOptions 寫法，解決 Deprecation 警告
     kotlin {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -76,10 +76,19 @@ dependencies {
     implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     
+    // Room 數據庫
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
+
     // OkHttp 用於呼叫 Vercel API
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     implementation("org.web3j:core:4.8.7-android")
+    
+    // WorkManager 用於背景通知
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
