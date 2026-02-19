@@ -1,5 +1,34 @@
 <resources>
     <string name="app_name">D-Linker</string>
-    <string name="contract_address">0xE3D9af5f15857Cb01E0614fA281fcc3256F62050</string>
-    <string name="token_symbol">子熙幣</string>
+    <string name="token_symbol">DLT</string>
+
+    <string name="loading">載入中...</string>
+    <string name="app_dashboard_title">D-Linker 儀表板</string>
+    <string name="my_assets">我的資產</string>
+    <string name="balance_format">%1$s %2$s</string>
+    <string name="device_wallet_address">設備錢包地址</string>
+    <string name="copy_success">複製成功</string>
+    <string name="receive">收款</string>
+    <string name="scan">掃描</string>
+    <string name="transfer">轉帳</string>
+    <string name="migration">設備轉移</string>
+    <string name="request_test_coins">領取 100 %1$s 測試幣</string>
+    <string name="airdrop_request_sent">入金請求已送出</string>
+    <string name="failure_message">失敗: %1$s</string>
+    <string name="manual_address_input">手動輸入地址</string>
+    <string name="address_placeholder">0x...</string>
+    <string name="cancel">取消</string>
+    <string name="confirm">確定</string>
+    <string name="send_symbol">發送 %1$s</string>
+    <string name="to_address">至: %1$s</string>
+    <string name="amount">金額</string>
+    <string name="confirm_send">確認發送</string>
+    <string name="transfer_success">轉帳成功！</string>
+    <string name="receive_address">收款地址</string>
+    <string name="close">關閉</string>
+    <string name="camera_permission_required">請授予相機權限</string>
+
+    <string name="migration_title">全額設備轉移</string>
+    <string name="migration_desc">由於私鑰儲存於硬體安全模組中無法匯出，若要更換設備，請將所有資產轉移至新設備的地址。</string>
+    <string name="migration_confirm">確認轉移全部餘額</string>
 </resources>

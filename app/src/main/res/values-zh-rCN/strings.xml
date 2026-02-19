@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">D-Linker</string>
+    <string name="token_symbol">DLT</string>
+
+    <string name="loading">加载中...</string>
+    <string name="app_dashboard_title">D-Linker 仪表板</string>
+    <string name="my_assets">我的资产</string>
+    <string name="balance_format">%1$s %2$s</string>
+    <string name="device_wallet_address">设备钱包地址</string>
+    <string name="copy_success">复制成功</string>
+    <string name="receive">收款</string>
+    <string name="scan">扫描</string>
+    <string name="transfer">转账</string>
+    <string name="migration">设备转移</string>
+    <string name="request_test_coins">领取 100 %1$s 测试币</string>
+    <string name="airdrop_request_sent">入金请求已发送</string>
+    <string name="failure_message">失败: %1$s</string>
+    <string name="manual_address_input">手动输入地址</string>
+    <string name="address_placeholder">0x...</string>
+    <string name="cancel">取消</string>
+    <string name="confirm">确定</string>
+    <string name="send_symbol">发送 %1$s</string>
+    <string name="to_address">至: %1$s</string>
+    <string name="amount">金额</string>
+    <string name="confirm_send">确认发送</string>
+    <string name="transfer_success">转账成功！</string>
+    <string name="receive_address">收款地址</string>
+    <string name="close">关闭</string>
+    <string name="camera_permission_required">请授予相机权限</string>
+
+    <string name="migration_title">全额设备转移</string>
+    <string name="migration_desc">由于私钥存储于硬件安全模块中无法导出，若要更换设备，请将所有资产转移至新设备的地址。</string>
+    <string name="migration_confirm">确认转移全部余额</string>
+</resources>
