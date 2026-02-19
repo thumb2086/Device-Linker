@@ -2,58 +2,31 @@ package com.dlinker.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.LocaleManager
 import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.LocaleList
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.coroutineScope
 import com.dlinker.app.crypto.KeyStoreManager
 import com.dlinker.app.crypto.QrCodeUtils
@@ -77,7 +51,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-class MainActivity : ComponentActivity() {
+// 修改為繼承 AppCompatActivity 以支援相容性 Locale 切換
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -116,6 +91,7 @@ fun DeviceLinkerApp() {
     var destinationAddress by remember { mutableStateOf("") }
     var showTransferDialog by remember { mutableStateOf(false) }
     var isMigrationMode by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -187,6 +163,9 @@ fun DeviceLinkerApp() {
                             isLoading = false
                         }
                     }) { Icon(Icons.Default.Refresh, null) }
+                    IconButton(onClick = { showSettingsDialog = true }) { 
+                        Icon(Icons.Default.Settings, stringResource(R.string.settings)) 
+                    }
                 }
             )
         }
@@ -267,6 +246,7 @@ fun DeviceLinkerApp() {
         }
     }
     if (showReceiptDialog) ReceiptDialog(address = derivedAddress) { showReceiptDialog = false }
+    if (showSettingsDialog) SettingsDialog(onDismiss = { showSettingsDialog = false })
     if (showScanner) {
         Dialog(onDismissRequest = { showScanner = false }) {
             Card(modifier = Modifier.fillMaxWidth().height(450.dp)) {
@@ -402,5 +382,60 @@ fun ReceiptDialog(address: String, onDismiss: () -> Unit) {
                 Button(onDismiss, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.close)) }
             }
         }
+    }
+}
+
+@Composable
+fun SettingsDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Column(modifier = Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
+                Text(stringResource(R.string.settings), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(stringResource(R.string.language_settings), fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                LanguageOption(stringResource(R.string.lang_auto), "") { setAppLocale(context, "") }
+                LanguageOption(stringResource(R.string.lang_zh_tw), "zh-TW") { setAppLocale(context, "zh-TW") }
+                LanguageOption(stringResource(R.string.lang_zh_cn), "zh-CN") { setAppLocale(context, "zh-CN") }
+                LanguageOption(stringResource(R.string.lang_en), "en") { setAppLocale(context, "en") }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.close))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LanguageOption(label: String, tag: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 12.dp),
+        color = Color.Transparent
+    ) {
+        Text(label, fontSize = 16.sp)
+    }
+}
+
+private fun setAppLocale(context: Context, languageTag: String) {
+    Log.d("LocaleChange", "Setting locale to: $languageTag")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val localeManager = context.getSystemService(LocaleManager::class.java)
+        if (languageTag.isEmpty()) {
+            localeManager.applicationLocales = LocaleList.getEmptyLocaleList()
+        } else {
+            localeManager.applicationLocales = LocaleList.forLanguageTags(languageTag)
+        }
+    } else {
+        val appLocale: LocaleListCompat = if (languageTag.isEmpty()) {
+            LocaleListCompat.getEmptyLocaleList()
+        } else {
+            LocaleListCompat.forLanguageTags(languageTag)
+        }
+        AppCompatDelegate.setApplicationLocales(appLocale)
     }
 }
