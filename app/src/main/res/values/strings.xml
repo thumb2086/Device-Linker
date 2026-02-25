@@ -50,6 +50,10 @@
     <string name="auth_confirm_desc">網頁端請求連結您的錢包。\n\nSession ID: %1$s\n地址: %2$s</string>
     <string name="auth_confirm_button">確認授權</string>
     <string name="auth_success">授權成功</string>
+    <string name="auth_success_return">授權成功，可返回網頁</string>
+    <string name="manual_code_entry">輸入授權碼</string>
+    <string name="manual_code_hint">貼上 session_xxx 或 dlinker:login:xxx</string>
+    <string name="manual_code_error">授權碼格式錯誤</string>
 
     <string name="bet_confirm_title">下注簽名請求</string>
     <string name="bet_confirm_desc">您正在進行 %1$s 遊戲下注。\n\n選擇: %2$s\n金額: %3$s %4$s</string>
