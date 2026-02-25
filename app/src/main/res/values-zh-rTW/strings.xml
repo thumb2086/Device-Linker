@@ -39,4 +39,13 @@
     <string name="lang_zh_tw">繁體中文</string>
     <string name="lang_zh_cn">簡體中文</string>
     <string name="lang_en">English</string>
+
+    <string name="auth_confirm_title">授權登入請求</string>
+    <string name="auth_confirm_desc">網頁端請求連結您的錢包。\n\nSession ID: %1$s\n地址: %2$s</string>
+    <string name="auth_confirm_button">確認授權</string>
+    <string name="auth_success">授權成功</string>
+    <string name="auth_success_return">授權成功，可返回網頁</string>
+    <string name="manual_code_entry">輸入授權碼</string>
+    <string name="manual_code_hint">貼上 session_xxx 或 dlinker:login:xxx</string>
+    <string name="manual_code_error">授權碼格式錯誤</string>
 </resources>

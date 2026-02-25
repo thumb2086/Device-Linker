@@ -64,12 +64,19 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import android.content.Intent
+import android.net.Uri
+
 // 定義導航狀態
 enum class Screen { Dashboard, History, Contacts }
 
 class MainActivity : AppCompatActivity() {
+    private var deepLinkSessionId = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        handleIntent(intent)
 
         lifecycle.coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -84,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         setContent {
             DeviceLinkerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    val sessionIdFromDeepLink by deepLinkSessionId
                     var currentScreen by remember { mutableStateOf(Screen.Dashboard) }
                     var preFilledAddress by remember { mutableStateOf("") }
                     var isPickingForTransfer by remember { mutableStateOf(false) }
@@ -92,6 +100,8 @@ class MainActivity : AppCompatActivity() {
                     when (currentScreen) {
                         Screen.Dashboard -> DashboardScreen(
                             initialAddress = preFilledAddress,
+                            deepLinkSessionId = sessionIdFromDeepLink,
+                            onDeepLinkHandled = { deepLinkSessionId.value = null },
                             isMigration = isMigrationMode,
                             onIsMigrationChange = { isMigrationMode = it },
                             onNavigateToHistory = { currentScreen = Screen.History },
@@ -127,6 +137,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val data = intent?.dataString ?: return
+        val sessionId = extractSessionId(data)
+        if (sessionId != null) {
+            deepLinkSessionId.value = sessionId
+        }
+    }
+
+    private fun extractSessionId(raw: String): String? {
+        val s = raw.trim()
+
+        // 純 sessionId
+        if (s.startsWith("session_")) return s
+
+        // dlinker:login:<sessionId>
+        val prefix1 = "dlinker:login:"
+        if (s.startsWith(prefix1, ignoreCase = true)) {
+            val id = s.substring(prefix1.length).trim()
+            return if (id.isNotBlank()) id else null
+        }
+
+        // dlinker://login/<sessionId>
+        val prefix2 = "dlinker://login/"
+        if (s.startsWith(prefix2, ignoreCase = true)) {
+            val id = s.substring(prefix2.length).trim()
+            return if (id.isNotBlank()) id else null
+        }
+
+        return null
+    }
+
     private fun setupBalanceCheckWorker() {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -160,6 +207,8 @@ private suspend fun updateBalanceAndNotify(context: Context, address: String, on
 @Composable
 fun DashboardScreen(
     initialAddress: String,
+    deepLinkSessionId: String? = null,
+    onDeepLinkHandled: () -> Unit = {},
     isMigration: Boolean,
     onIsMigrationChange: (Boolean) -> Unit,
     onNavigateToHistory: () -> Unit,
@@ -180,6 +229,15 @@ fun DashboardScreen(
     var destinationAddress by remember { mutableStateOf("") }
     var showTransferDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showManualCodeDialog by remember { mutableStateOf(false) }
+
+    // 處理 Deep Link 傳入的 Session ID
+    LaunchedEffect(deepLinkSessionId) {
+        if (deepLinkSessionId != null) {
+            showAuthConfirm = deepLinkSessionId
+            onDeepLinkHandled()
+        }
+    }
 
     // 用於確認對話框的狀態
     var showAuthConfirm by remember { mutableStateOf<String?>(null) }
@@ -346,7 +404,7 @@ fun DashboardScreen(
                         try {
                             val pubKey = Base64.encodeToString(KeyStoreManager.getPublicKey(), Base64.NO_WRAP)
                             DLinkerApi.sendAuth(sid, derivedAddress, pubKey).onSuccess {
-                                Toast.makeText(context, context.getString(R.string.auth_success), Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.auth_success_return), Toast.LENGTH_LONG).show()
                             }.onFailure {
                                 Toast.makeText(context, context.getString(R.string.failure_message, it.message), Toast.LENGTH_LONG).show()
                             }
@@ -413,10 +471,58 @@ fun DashboardScreen(
                             }
                         })
                     }
-                    Button({ showScanner = false }, Modifier.fillMaxWidth().padding(8.dp)) { Text(stringResource(R.string.close)) }
+                    Row(modifier = Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton({ showScanner = false; showManualCodeDialog = true }, Modifier.weight(1f)) { Text(stringResource(R.string.manual_code_entry)) }
+                        Button({ showScanner = false }, Modifier.weight(1f)) { Text(stringResource(R.string.close)) }
+                    }
                 }
             }
         }
+    }
+
+    if (showManualCodeDialog) {
+        var codeInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showManualCodeDialog = false },
+            title = { Text(stringResource(R.string.manual_code_entry)) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = codeInput,
+                        onValueChange = { codeInput = it },
+                        label = { Text(stringResource(R.string.manual_code_hint)) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val raw = codeInput.trim()
+                    // 這裡我們需要一個靜態方法或將 extractSessionId 移到外部
+                    // 或者我們就在這裡重複一下邏輯，或者調用 MainActivity 的方法
+                    // 考慮到 extractSessionId 是 MainActivity 的 private 方法
+                    // 我們可以簡單地在這裡實作一個簡單的版本，或者把 MainActivity 的改為 internal/public
+
+                    // 為了方便，我這裡直接寫邏輯，或者調用一個 Helper
+                    val sid = when {
+                        raw.startsWith("session_") -> raw
+                        raw.startsWith("dlinker:login:", ignoreCase = true) -> raw.substring("dlinker:login:".length).trim()
+                        raw.startsWith("dlinker://login/", ignoreCase = true) -> raw.substring("dlinker://login/".length).trim()
+                        else -> null
+                    }
+
+                    if (sid.isNullOrBlank()) {
+                        Toast.makeText(context, context.getString(R.string.manual_code_error), Toast.LENGTH_SHORT).show()
+                    } else {
+                        showManualCodeDialog = false
+                        showAuthConfirm = sid
+                    }
+                }) { Text(stringResource(R.string.confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualCodeDialog = false }) { Text(stringResource(R.string.cancel)) }
+            }
+        )
     }
 }
 
