@@ -3,8 +3,9 @@ name: Build Flutter Multi-Platform
 on:
   push:
     branches:
-      - main
-      - develop
+      - '**'
+    tags:
+      - 'flutter-v*'
     paths:
       - 'flutter_app/**'
       - '.github/workflows/flutter-multiplatform-build.yml'
