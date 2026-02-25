@@ -231,6 +231,9 @@ fun DashboardScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showManualCodeDialog by remember { mutableStateOf(false) }
 
+    // 用於確認對話框的狀態
+    var showAuthConfirm by remember { mutableStateOf<String?>(null) }
+
     // 處理 Deep Link 傳入的 Session ID
     LaunchedEffect(deepLinkSessionId) {
         if (deepLinkSessionId != null) {
@@ -238,9 +241,6 @@ fun DashboardScreen(
             onDeepLinkHandled()
         }
     }
-
-    // 用於確認對話框的狀態
-    var showAuthConfirm by remember { mutableStateOf<String?>(null) }
     var showBetConfirm by remember { mutableStateOf<Triple<String, String, String>?>(null) } // gameId, side, amount
 
     LaunchedEffect(initialAddress) {

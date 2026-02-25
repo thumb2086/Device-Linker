@@ -12,6 +12,7 @@
 - **UI/UX 優化**:
     - 授權成功後顯示「授權成功，可返回網頁」提示，優化手機網頁登入體驗。
 - **規格對齊**: 統一 normalize 各種來源的 `sessionId` 並呼叫 `DLinkerApi.sendAuth`。
+- **編譯修復**: 修正 `MainActivity.kt` 中變數宣告順序錯誤導致的建置失敗。
 
 ---
 ## [2026-02-18] CI/CD Fix: Signing Configuration & Key Alias
