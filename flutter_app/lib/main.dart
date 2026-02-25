@@ -12,7 +12,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:pointycastle/export.dart' hide State;
+import 'package:pointycastle/export.dart' hide Padding, State;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
@@ -158,7 +158,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
 
-  AppLinks? _appLinks;
   StreamSubscription<Uri>? _deepLinkSubscription;
   Timer? _balanceTimer;
 
@@ -222,8 +221,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _setupDeepLinks() async {
     try {
       final links = AppLinks();
-      _appLinks = links;
-
       // Use dynamic call so app-links API version changes do not break compilation.
       final dynamic initial = await (links as dynamic).getInitialLink();
       await _handlePayload(initial?.toString());
@@ -244,10 +241,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       await task();
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -963,7 +961,7 @@ class AssetCard extends StatelessWidget {
             Text(
               T.of(context, 'my_assets'),
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
               ),
             ),
             const SizedBox(height: 6),
@@ -975,7 +973,7 @@ class AssetCard extends StatelessWidget {
             Text(
               T.of(context, 'device_wallet_address'),
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
                 fontSize: 12,
               ),
             ),
@@ -1269,10 +1267,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
         );
       }
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -1325,8 +1324,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   children: [
                     CircleAvatar(
                       backgroundColor: isSend
-                          ? Colors.red.withOpacity(0.12)
-                          : Colors.green.withOpacity(0.12),
+                          ? Colors.red.withValues(alpha: 0.12)
+                          : Colors.green.withValues(alpha: 0.12),
                       child: Icon(
                         isSend ? Icons.north_east : Icons.south_west,
                         color: isSend ? Colors.red : Colors.green,
@@ -2064,7 +2063,7 @@ class NotificationService {
     );
 
     final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final title = 'Token Deposit';
+    const title = 'Token Deposit';
     final body =
         'Received ${amount.toStringAsFixed(2)} tokens. Current balance: ${total.toStringAsFixed(2)}';
 
