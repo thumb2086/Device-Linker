@@ -75,10 +75,7 @@ jobs:
       - name: Initialize Flutter project for target platform
         working-directory: flutter_app
         run: |
-          flutter create . \
-            --project-name device_linker_flutter \
-            --org com.devicelinker \
-            --platforms=${{ matrix.flutter_platforms }}
+          flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
       - name: Get dependencies
         working-directory: flutter_app
