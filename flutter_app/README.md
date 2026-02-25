@@ -1,26 +1,24 @@
 # Flutter Multi-Platform App
 
-This folder is now a functional Flutter migration of the original Android app.
+This folder is an isolated Flutter project for the Device-Linker migration.
 
-## Migration scope (implemented)
-- Hardware-bound wallet key (local secure storage)
-- Wallet address derivation
-- Auth / coinflip / airdrop / transfer / history API integration
-- Dashboard with balance auto-refresh and manual refresh
-- Receive QR display
-- QR scanner flow (auth / bet / transfer parsing)
-- Manual auth code entry fallback
-- Device migration flow (transfer all balance)
-- Contacts management (add/delete/select)
-- Transaction history with pagination
-- Balance increase local notifications
-- Deep-link handling for `dlinker:` login session links
-- Language switch (System / zh-TW / zh-CN / en)
-
-## Important notes
+## Migration rule
 - Existing Android project files remain unchanged.
-- Existing old CI/CD workflows remain unchanged.
-- New Flutter release workflow is in `.github/workflows/flutter-multiplatform-build.yml`.
+- Existing CI/CD workflows remain unchanged.
+- New multi-platform release workflow is in `.github/workflows/flutter-multiplatform-build.yml`.
+
+## Migrated features
+- Hardware-bound local wallet key generation and address derivation
+- Balance sync + deposit notification
+- Test coin airdrop request
+- Transfer and full-device migration flow
+- QR receive address display
+- QR scanner + manual code input
+- Deep link auth flow (`dlinker:login:*`, `dlinker://login/*`)
+- Coin flip signature request flow (`dlinker:coinflip:*`)
+- Transaction history pagination
+- Local contacts management and picker
+- Language switching (system / zh-TW / zh-CN / en)
 
 ## Local bootstrap
 ```bash

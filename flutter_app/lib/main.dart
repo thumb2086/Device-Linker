@@ -4,7 +4,6 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
-import 'package:asn1lib/asn1lib.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,19 +18,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const DeviceLinkerApp());
-}
+enum AppLanguage { system, zhTw, zhCn, en }
 
-enum AppLanguage {
-  system,
-  zhTw,
-  zhCn,
-  en,
-}
-
-extension AppLanguageX on AppLanguage {
+extension AppLanguageTag on AppLanguage {
   String get tag {
     switch (this) {
       case AppLanguage.system:
@@ -45,8 +34,8 @@ extension AppLanguageX on AppLanguage {
     }
   }
 
-  static AppLanguage fromTag(String raw) {
-    switch (raw) {
+  static AppLanguage fromTag(String tag) {
+    switch (tag) {
       case 'zh-TW':
         return AppLanguage.zhTw;
       case 'zh-CN':
@@ -59,6 +48,12 @@ extension AppLanguageX on AppLanguage {
   }
 }
 
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.instance.initialize();
+  runApp(const DeviceLinkerApp());
+}
+
 class DeviceLinkerApp extends StatefulWidget {
   const DeviceLinkerApp({super.key});
 
@@ -67,41 +62,33 @@ class DeviceLinkerApp extends StatefulWidget {
 }
 
 class _DeviceLinkerAppState extends State<DeviceLinkerApp> {
-  static const String _languagePrefKey = 'dlinker.language';
-
   AppLanguage _language = AppLanguage.system;
-  bool _isReady = false;
+  bool _ready = false;
 
   @override
   void initState() {
     super.initState();
-    _loadLanguage();
+    _loadSettings();
   }
 
-  Future<void> _loadLanguage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_languagePrefKey) ?? 'system';
-    if (!mounted) {
-      return;
-    }
+  Future<void> _loadSettings() async {
+    final language = await AppStorage.getLanguage();
+    if (!mounted) return;
     setState(() {
-      _language = AppLanguageX.fromTag(raw);
-      _isReady = true;
+      _language = language;
+      _ready = true;
     });
   }
 
-  Future<void> _setLanguage(AppLanguage language) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_languagePrefKey, language.tag);
-    if (!mounted) {
-      return;
-    }
+  Future<void> _onLanguageChanged(AppLanguage language) async {
+    await AppStorage.setLanguage(language);
+    if (!mounted) return;
     setState(() {
       _language = language;
     });
   }
 
-  Locale? _resolveLocale() {
+  Locale? get _locale {
     switch (_language) {
       case AppLanguage.system:
         return null;
@@ -116,12 +103,11 @@ class _DeviceLinkerAppState extends State<DeviceLinkerApp> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isReady) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
+    if (!_ready) {
+      return const MaterialApp(
         home: Scaffold(
           body: Center(
-            child: const CircularProgressIndicator(),
+            child: CircularProgressIndicator(),
           ),
         ),
       );
@@ -130,7 +116,7 @@ class _DeviceLinkerAppState extends State<DeviceLinkerApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'D-Linker',
-      locale: _resolveLocale(),
+      locale: _locale,
       supportedLocales: const [
         Locale('en'),
         Locale('zh', 'TW'),
@@ -142,12 +128,12 @@ class _DeviceLinkerAppState extends State<DeviceLinkerApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B)),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
       home: DashboardScreen(
         language: _language,
-        onLanguageChanged: _setLanguage,
+        onLanguageChanged: _onLanguageChanged,
       ),
     );
   }
@@ -155,9 +141,9 @@ class _DeviceLinkerAppState extends State<DeviceLinkerApp> {
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
+    super.key,
     required this.language,
     required this.onLanguageChanged,
-    super.key,
   });
 
   final AppLanguage language;
@@ -171,20 +157,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
-  final NotificationService _notificationService = NotificationService.instance;
 
-  StreamSubscription<Uri>? _deepLinkSub;
+  AppLinks? _appLinks;
+  StreamSubscription<Uri>? _deepLinkSubscription;
   Timer? _balanceTimer;
 
-  String _derivedAddress = '';
+  String _walletAddress = '';
   String _balance = '0.00';
   double _lastKnownBalance = 0.0;
   bool _isLoading = false;
   bool _isSyncingBalance = false;
 
   String? _pendingAuthSessionId;
-  BetRequest? _pendingBetRequest;
+  BetRequest? _pendingBet;
   bool _isPromptOpen = false;
+
+  bool get _scannerSupported {
+    if (kIsWeb) return true;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        return true;
+      default:
+        return false;
+    }
+  }
 
   @override
   void initState() {
@@ -194,320 +192,128 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
-    _deepLinkSub?.cancel();
+    _deepLinkSubscription?.cancel();
     _balanceTimer?.cancel();
-    _api.dispose();
     super.dispose();
   }
 
   Future<void> _bootstrap() async {
-    try {
-      await _notificationService.initialize();
-      await _notificationService.requestPermissions();
+    await NotificationService.instance.requestPermissions();
 
-      await _keyService.ensureKeyPair();
-      final addr = await _keyService.getWalletAddress();
-      final lastBalance = await AppStorage.getLastKnownBalance();
+    await _keyService.ensureKeyPair();
+    final address = await _keyService.getWalletAddress();
+    final lastBalance = await AppStorage.getLastKnownBalance();
 
-      if (mounted) {
-        setState(() {
-          _derivedAddress = addr;
-          _lastKnownBalance = double.tryParse(lastBalance) ?? 0.0;
-        });
-      }
+    if (!mounted) return;
+    setState(() {
+      _walletAddress = address;
+      _lastKnownBalance = lastBalance;
+    });
 
-      await _syncBalance(notifyIfIncreased: false);
-      _balanceTimer = Timer.periodic(
-        const Duration(seconds: 15),
-        (_) => _syncBalance(),
-      );
+    await _syncBalance(notifyIfIncreased: false);
 
-      await _setupDeepLinks();
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      _showSnack(
-        AppStrings.tr(
-          context,
-          'failure_message',
-          [e.toString()],
-        ),
-      );
-    }
+    _balanceTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _syncBalance();
+    });
+
+    await _setupDeepLinks();
   }
 
   Future<void> _setupDeepLinks() async {
     try {
       final links = AppLinks();
+      _appLinks = links;
+
+      // Use dynamic call so app-links API version changes do not break compilation.
       final dynamic initial = await (links as dynamic).getInitialLink();
-      _handleRawPayload(initial?.toString());
-      _deepLinkSub = links.uriLinkStream.listen(
-        (uri) => _handleRawPayload(uri.toString()),
-      );
+      await _handlePayload(initial?.toString());
+
+      _deepLinkSubscription = links.uriLinkStream.listen((uri) {
+        _handlePayload(uri.toString());
+      });
     } catch (e) {
-      debugPrint('Deep link setup failed: $e');
+      debugPrint('Deep link init failed: $e');
     }
   }
 
-  Future<void> _handleRawPayload(String? raw) async {
-    if (raw == null) {
-      return;
-    }
-    final data = raw.trim();
-    if (data.isEmpty) {
-      return;
-    }
-
-    final sid = _extractSessionId(data);
-    if (sid != null) {
-      _pendingAuthSessionId = sid;
-      _drainPromptQueue();
-      return;
-    }
-
-    final bet = _extractBetRequest(data);
-    if (bet != null) {
-      _pendingBetRequest = bet;
-      _drainPromptQueue();
-      return;
-    }
-
-    final transferAddr = _extractAddress(data);
-    if (transferAddr != null) {
-      await _openTransferFlow(isMigration: false, initialAddress: transferAddr);
-      return;
-    }
-
-    if (mounted) {
-      _showSnack(AppStrings.tr(context, 'unknown_code'));
-    }
-  }
-
-  void _drainPromptQueue() {
-    if (!mounted || _isPromptOpen) {
-      return;
-    }
-
-    if (_pendingAuthSessionId != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted || _isPromptOpen) {
-          return;
-        }
-        final sid = _pendingAuthSessionId;
-        if (sid == null) {
-          return;
-        }
-        _pendingAuthSessionId = null;
-        _isPromptOpen = true;
-        await _showAuthConfirmDialog(sid);
-        _isPromptOpen = false;
-        _drainPromptQueue();
-      });
-      return;
-    }
-
-    if (_pendingBetRequest != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted || _isPromptOpen) {
-          return;
-        }
-        final bet = _pendingBetRequest;
-        if (bet == null) {
-          return;
-        }
-        _pendingBetRequest = null;
-        _isPromptOpen = true;
-        await _showBetConfirmDialog(bet);
-        _isPromptOpen = false;
-        _drainPromptQueue();
-      });
-    }
-  }
-
-  Future<void> _runWithLoading(Future<void> Function() action) async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-      });
-    }
-
+  Future<void> _runWithLoading(Future<void> Function() task) async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+    });
     try {
-      await action();
+      await task();
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
   Future<void> _syncBalance({bool notifyIfIncreased = true}) async {
-    if (_derivedAddress.isEmpty || _isSyncingBalance) {
-      return;
-    }
-
+    if (_walletAddress.isEmpty || _isSyncingBalance) return;
     _isSyncingBalance = true;
-    try {
-      final newBalance = await _api.syncBalance(_derivedAddress);
-      final parsed = double.tryParse(newBalance) ?? 0.0;
 
-      if (notifyIfIncreased && parsed > _lastKnownBalance) {
-        final diff = parsed - _lastKnownBalance;
-        await _notificationService.showBalanceNotification(
-          amountDiff: diff,
-          total: parsed,
+    try {
+      final nextBalance = await _api.syncBalance(_walletAddress);
+      final next = double.tryParse(nextBalance) ?? 0.0;
+
+      if (notifyIfIncreased && next > _lastKnownBalance) {
+        await NotificationService.instance.showBalanceNotification(
+          amount: next - _lastKnownBalance,
+          total: next,
         );
       }
 
-      _lastKnownBalance = parsed;
-      await AppStorage.setLastKnownBalance(newBalance);
+      _lastKnownBalance = next;
+      await AppStorage.setLastKnownBalance(nextBalance);
 
-      if (mounted) {
-        setState(() {
-          _balance = newBalance;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _balance = nextBalance;
+      });
     } catch (e) {
-      debugPrint('sync balance failed: $e');
+      debugPrint('Balance sync failed: $e');
     } finally {
       _isSyncingBalance = false;
     }
   }
 
   Future<void> _requestAirdrop() async {
-    if (_derivedAddress.isEmpty) {
-      return;
-    }
-
+    if (_walletAddress.isEmpty) return;
     await _runWithLoading(() async {
-      final publicKey = await _keyService.getPublicKeySpkiBase64();
-      final signature = await _keyService.signData(
-        _derivedAddress.trim().toLowerCase(),
-      );
-
-      await _api.requestAirdrop(
-        walletAddress: _derivedAddress.trim().toLowerCase(),
-        publicKey: publicKey,
-        signature: signature,
-      );
-
-      if (mounted) {
-        _showSnack(AppStrings.tr(context, 'airdrop_request_sent'));
-      }
-
-      await Future<void>.delayed(const Duration(seconds: 2));
-      await _syncBalance();
-    });
-  }
-
-  Future<void> _openTransferFlow({
-    required bool isMigration,
-    String initialAddress = '',
-  }) async {
-    if (!mounted) {
-      return;
-    }
-
-    String destinationAddress = initialAddress.trim();
-
-    while (destinationAddress.isEmpty) {
-      final addressAction = await _showAddressInputDialog(
-        isMigration: isMigration,
-        preFilled: destinationAddress,
-      );
-
-      if (!mounted || addressAction == null) {
-        return;
-      }
-
-      if (addressAction.type == AddressInputAction.confirm) {
-        destinationAddress = addressAction.value.trim();
-      } else if (addressAction.type == AddressInputAction.scan) {
-        final scanned = await _showScannerDialog();
-        if (scanned == null || scanned.trim().isEmpty) {
-          return;
-        }
-        final addr = _extractAddress(scanned);
-        if (addr == null) {
-          await _handleRawPayload(scanned);
-          return;
-        }
-        destinationAddress = addr;
-      } else if (addressAction.type == AddressInputAction.contacts) {
-        final selected = await Navigator.of(context).push<String>(
-          MaterialPageRoute<String>(
-            builder: (_) => ContactsScreen(
-              selectionMode: true,
-              repository: _contactRepository,
-            ),
-          ),
+      try {
+        final pubKey = await _keyService.getPublicKeySpkiBase64();
+        final signature = await _keyService.signData(_walletAddress.trim().toLowerCase());
+        await _api.requestAirdrop(
+          walletAddress: _walletAddress.trim().toLowerCase(),
+          publicKey: pubKey,
+          signature: signature,
         );
-
-        if (selected == null || selected.trim().isEmpty) {
-          return;
-        }
-        destinationAddress = selected.trim();
+        if (!mounted) return;
+        _showSnack(T.of(context, 'airdrop_request_sent'));
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await _syncBalance();
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack(T.of(context, 'failure_message', [e.toString()]));
       }
-    }
-
-    final defaultAmount = isMigration ? _balance : '10';
-    final amount = await _showTransferDialog(
-      toAddress: destinationAddress,
-      isMigration: isMigration,
-      amount: defaultAmount,
-    );
-
-    if (amount == null || amount.trim().isEmpty || !mounted) {
-      return;
-    }
-
-    await _submitTransfer(destinationAddress, amount);
-  }
-
-  Future<void> _submitTransfer(String toAddress, String rawAmount) async {
-    await _runWithLoading(() async {
-      final cleanTo = toAddress.trim().toLowerCase().replaceFirst(RegExp(r'^0x'), '');
-      var amount = rawAmount.trim();
-      if (amount.endsWith('.0')) {
-        amount = amount.substring(0, amount.length - 2);
-      }
-
-      final signMessage = 'transfer:$cleanTo:$amount';
-      final signature = await _keyService.signData(signMessage);
-      final publicKey = await _keyService.getPublicKeySpkiBase64();
-
-      await _api.transfer(
-        from: _derivedAddress.trim(),
-        to: toAddress.trim(),
-        amount: rawAmount.trim(),
-        signature: signature,
-        publicKey: publicKey,
-      );
-
-      if (mounted) {
-        _showSnack(AppStrings.tr(context, 'transfer_success'));
-      }
-
-      await Future<void>.delayed(const Duration(seconds: 2));
-      await _syncBalance();
     });
   }
 
   Future<void> _openHistory() async {
-    await Navigator.of(context).push<void>(
+    if (!mounted) return;
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HistoryScreen(
-          api: _api,
-          keyService: _keyService,
-        ),
+        builder: (_) => HistoryScreen(api: _api, keyService: _keyService),
       ),
     );
   }
 
   Future<void> _openContacts() async {
-    await Navigator.of(context).push<void>(
+    if (!mounted) return;
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ContactsScreen(
           selectionMode: false,
@@ -517,148 +323,177 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Future<void> _openGeneralScanner() async {
-    final scanned = await _showScannerDialog();
-    if (!mounted || scanned == null || scanned.trim().isEmpty) {
-      return;
+  Future<String?> _pickAddressFromContacts() async {
+    if (!mounted) return null;
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => ContactsScreen(
+          selectionMode: true,
+          repository: _contactRepository,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openTransferFlow({
+    required bool isMigration,
+    String initialAddress = '',
+  }) async {
+    String destinationAddress = initialAddress.trim();
+
+    while (destinationAddress.isEmpty) {
+      final input = await _showAddressInputDialog(isMigration: isMigration);
+      if (!mounted || input == null) return;
+
+      switch (input.action) {
+        case AddressInputAction.confirm:
+          destinationAddress = input.value.trim();
+          break;
+        case AddressInputAction.scan:
+          final raw = await _showScannerDialog();
+          if (!mounted || raw == null || raw.trim().isEmpty) return;
+          final scannedAddress = _extractAddress(raw);
+          if (scannedAddress != null) {
+            destinationAddress = scannedAddress;
+          } else {
+            await _handlePayload(raw);
+            return;
+          }
+          break;
+        case AddressInputAction.contacts:
+          final selected = await _pickAddressFromContacts();
+          if (selected == null || selected.trim().isEmpty) return;
+          destinationAddress = selected.trim();
+          break;
+      }
     }
-    await _handleRawPayload(scanned);
+
+    final amount = await _showTransferDialog(
+      toAddress: destinationAddress,
+      isMigration: isMigration,
+      presetAmount: isMigration ? _balance : '10',
+    );
+
+    if (!mounted || amount == null || amount.trim().isEmpty) return;
+
+    await _runWithLoading(() async {
+      try {
+        final cleanTo = destinationAddress.trim().toLowerCase().replaceFirst(RegExp(r'^0x'), '');
+        var normalizedAmount = amount.trim();
+        if (normalizedAmount.endsWith('.0')) {
+          normalizedAmount = normalizedAmount.substring(0, normalizedAmount.length - 2);
+        }
+
+        final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
+        final publicKey = await _keyService.getPublicKeySpkiBase64();
+
+        await _api.transfer(
+          from: _walletAddress.trim().toLowerCase(),
+          to: destinationAddress.trim().toLowerCase(),
+          amount: amount.trim(),
+          signature: signature,
+          publicKey: publicKey,
+        );
+
+        if (!mounted) return;
+        _showSnack(T.of(context, 'transfer_success'));
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await _syncBalance();
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack(T.of(context, 'failure_message', [e.toString()]));
+      }
+    });
+  }
+
+  Future<void> _openGeneralScanner() async {
+    final raw = await _showScannerDialog();
+    if (!mounted || raw == null || raw.trim().isEmpty) return;
+    await _handlePayload(raw);
+  }
+
+  Future<String?> _showScannerDialog() {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ScannerDialog(
+        scannerSupported: _scannerSupported,
+      ),
+    );
   }
 
   Future<void> _showReceiveDialog() async {
+    if (_walletAddress.isEmpty) return;
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'receive_address')),
+      builder: (_) => AlertDialog(
+        title: Text(T.of(context, 'receive_address')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_derivedAddress.isNotEmpty)
-              QrImageView(
-                data: _derivedAddress,
-                version: QrVersions.auto,
-                size: 220,
-                backgroundColor: Colors.white,
-              ),
+            QrImageView(
+              data: _walletAddress,
+              version: QrVersions.auto,
+              size: 220,
+            ),
             const SizedBox(height: 12),
             SelectableText(
-              _derivedAddress,
+              _walletAddress,
               textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'close')),
+            child: Text(T.of(context, 'close')),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _showSettingsDialog() async {
-    await showDialog<void>(
+  Future<AddressInputResult?> _showAddressInputDialog({required bool isMigration}) {
+    final controller = TextEditingController();
+    return showDialog<AddressInputResult>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'settings')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(AppStrings.tr(context, 'language_settings')),
-            const SizedBox(height: 8),
-            _languageTile(AppLanguage.system, AppStrings.tr(context, 'lang_auto')),
-            _languageTile(AppLanguage.zhTw, AppStrings.tr(context, 'lang_zh_tw')),
-            _languageTile(AppLanguage.zhCn, AppStrings.tr(context, 'lang_zh_cn')),
-            _languageTile(AppLanguage.en, AppStrings.tr(context, 'lang_en')),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'close')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _languageTile(AppLanguage language, String title) {
-    return InkWell(
-      onTap: () async {
-        await widget.onLanguageChanged(language);
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          children: [
-            Expanded(child: Text(title)),
-            if (widget.language == language)
-              Icon(
-                Icons.check,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<_AddressInputResult?> _showAddressInputDialog({
-    required bool isMigration,
-    required String preFilled,
-  }) async {
-    final controller = TextEditingController(text: preFilled);
-
-    final result = await showDialog<_AddressInputResult>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          isMigration
-              ? AppStrings.tr(context, 'migration')
-              : AppStrings.tr(context, 'manual_address_input'),
-        ),
+      builder: (_) => AlertDialog(
+        title: Text(T.of(context, isMigration ? 'migration' : 'manual_address_input')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: controller,
               decoration: InputDecoration(
-                labelText: AppStrings.tr(context, 'address_placeholder'),
-                border: const OutlineInputBorder(),
+                labelText: T.of(context, 'address_placeholder'),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Row(
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                IconButton(
-                  tooltip: AppStrings.tr(context, 'contacts'),
-                  onPressed: () {
-                    Navigator.of(context).pop(
-                      const _AddressInputResult(
-                        type: AddressInputAction.contacts,
-                        value: '',
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.contacts),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop(
+                        const AddressInputResult(action: AddressInputAction.contacts, value: ''),
+                      );
+                    },
+                    icon: const Icon(Icons.contacts),
+                    label: Text(T.of(context, 'contacts')),
+                  ),
                 ),
-                IconButton(
-                  tooltip: AppStrings.tr(context, 'scan'),
-                  onPressed: () {
-                    Navigator.of(context).pop(
-                      const _AddressInputResult(
-                        type: AddressInputAction.scan,
-                        value: '',
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.qr_code_scanner),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop(
+                        const AddressInputResult(action: AddressInputAction.scan, value: ''),
+                      );
+                    },
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: Text(T.of(context, 'scan')),
+                  ),
                 ),
               ],
             ),
@@ -667,68 +502,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
+            child: Text(T.of(context, 'cancel')),
           ),
           FilledButton(
             onPressed: () {
               Navigator.of(context).pop(
-                _AddressInputResult(
-                  type: AddressInputAction.confirm,
-                  value: controller.text,
-                ),
+                AddressInputResult(action: AddressInputAction.confirm, value: controller.text),
               );
             },
-            child: Text(AppStrings.tr(context, 'confirm')),
+            child: Text(T.of(context, 'confirm')),
           ),
         ],
       ),
     );
-
-    controller.dispose();
-    return result;
   }
 
   Future<String?> _showTransferDialog({
     required String toAddress,
     required bool isMigration,
-    required String amount,
-  }) async {
-    final controller = TextEditingController(text: amount);
+    required String presetAmount,
+  }) {
+    final controller = TextEditingController(text: presetAmount);
 
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: Text(
           isMigration
-              ? AppStrings.tr(context, 'migration_title')
-              : AppStrings.tr(context, 'send_symbol', [
-                  AppStrings.tr(context, 'token_symbol'),
-                ]),
+              ? T.of(context, 'migration_title')
+              : T.of(context, 'send_symbol', [T.of(context, 'token_symbol')]),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              AppStrings.tr(context, 'to_address', [toAddress]),
-              style: TextStyle(color: Theme.of(context).colorScheme.outline),
-            ),
-            const SizedBox(height: 8),
-            if (isMigration)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  AppStrings.tr(context, 'migration_desc'),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
+            Text(T.of(context, 'to_address', [toAddress]), style: const TextStyle(fontSize: 12)),
+            if (isMigration) ...[
+              const SizedBox(height: 8),
+              Text(T.of(context, 'migration_desc'), style: const TextStyle(fontSize: 12)),
+            ],
+            const SizedBox(height: 12),
             TextField(
               controller: controller,
               readOnly: isMigration,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
-                labelText: AppStrings.tr(context, 'amount'),
-                border: const OutlineInputBorder(),
+                labelText: T.of(context, 'amount'),
               ),
             ),
           ],
@@ -736,405 +555,429 @@ class _DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: Text(
-              isMigration
-                  ? AppStrings.tr(context, 'migration_confirm')
-                  : AppStrings.tr(context, 'confirm_send'),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    controller.dispose();
-    return result;
-  }
-
-  Future<void> _showAuthConfirmDialog(String sessionId) async {
-    if (!mounted) {
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'auth_confirm_title')),
-        content: Text(
-          AppStrings.tr(
-            context,
-            'auth_confirm_desc',
-            [sessionId, _derivedAddress],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
-          ),
-          FilledButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await _runWithLoading(() async {
-                final pubKey = await _keyService.getPublicKeySpkiBase64();
-                await _api.sendAuth(
-                  sessionId: sessionId,
-                  address: _derivedAddress,
-                  publicKey: pubKey,
-                );
-
-                if (mounted) {
-                  _showSnack(AppStrings.tr(context, 'auth_success_return'));
-                }
-              });
-            },
-            child: Text(AppStrings.tr(context, 'auth_confirm_button')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showBetConfirmDialog(BetRequest bet) async {
-    if (!mounted) {
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'bet_confirm_title')),
-        content: Text(
-          AppStrings.tr(
-            context,
-            'bet_confirm_desc',
-            [
-              'Coin Flip',
-              bet.side,
-              bet.amount,
-              AppStrings.tr(context, 'token_symbol'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
-          ),
-          FilledButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await _runWithLoading(() async {
-                final signMessage = 'coinflip:${bet.side}:${bet.amount}';
-                final signature = await _keyService.signData(signMessage);
-                final pubKey = await _keyService.getPublicKeySpkiBase64();
-                await _api.sendCoinFlip(
-                  gameId: bet.gameId,
-                  address: _derivedAddress,
-                  side: bet.side,
-                  amount: bet.amount,
-                  signature: signature,
-                  publicKey: pubKey,
-                );
-                if (mounted) {
-                  _showSnack(AppStrings.tr(context, 'bet_success'));
-                }
-              });
-            },
-            child: Text(AppStrings.tr(context, 'bet_confirm_button')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<String?> _showScannerDialog() async {
-    if (!_scannerSupported) {
-      return _showManualCodeDialog();
-    }
-
-    return showDialog<String>(
-      context: context,
-      builder: (_) => const _ScannerDialog(),
-    );
-  }
-
-  Future<String?> _showManualCodeDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'manual_code_entry')),
-        content: TextField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: AppStrings.tr(context, 'manual_code_hint'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
+            child: Text(T.of(context, 'cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: Text(AppStrings.tr(context, 'confirm')),
+            child: Text(T.of(context, isMigration ? 'migration_confirm' : 'confirm_send')),
           ),
         ],
       ),
     );
-
-    controller.dispose();
-    return result;
   }
 
-  bool get _scannerSupported {
-    if (kIsWeb) {
-      return true;
+  Future<void> _openSettingsDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(T.of(context, 'settings')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _languageTile(AppLanguage.system, T.of(context, 'lang_auto')),
+            _languageTile(AppLanguage.zhTw, T.of(context, 'lang_zh_tw')),
+            _languageTile(AppLanguage.zhCn, T.of(context, 'lang_zh_cn')),
+            _languageTile(AppLanguage.en, T.of(context, 'lang_en')),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(T.of(context, 'close')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _languageTile(AppLanguage language, String label) {
+    return RadioListTile<AppLanguage>(
+      contentPadding: EdgeInsets.zero,
+      title: Text(label),
+      value: language,
+      groupValue: widget.language,
+      onChanged: (value) async {
+        if (value == null) return;
+        await widget.onLanguageChanged(value);
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+    );
+  }
+
+  Future<void> _handlePayload(String? raw) async {
+    if (raw == null || raw.trim().isEmpty) return;
+
+    final data = raw.trim();
+    final sessionId = _extractSessionId(data);
+    if (sessionId != null) {
+      _queueAuthPrompt(sessionId);
+      return;
     }
 
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        return true;
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.windows:
-        return false;
+    final bet = _extractBetRequest(data);
+    if (bet != null) {
+      _queueBetPrompt(bet);
+      return;
     }
+
+    final address = _extractAddress(data);
+    if (address != null) {
+      await _openTransferFlow(isMigration: false, initialAddress: address);
+      return;
+    }
+
+    if (!mounted) return;
+    _showSnack(T.of(context, 'manual_code_error'));
   }
 
   String? _extractSessionId(String raw) {
-    final s = raw.trim();
+    final value = raw.trim();
 
-    if (s.startsWith('session_')) {
-      return s;
-    }
+    if (value.startsWith('session_')) return value;
 
     const prefix1 = 'dlinker:login:';
-    if (s.toLowerCase().startsWith(prefix1)) {
-      final value = s.substring(prefix1.length).trim();
-      return value.isEmpty ? null : value;
+    if (value.toLowerCase().startsWith(prefix1)) {
+      final session = value.substring(prefix1.length).trim();
+      return session.isEmpty ? null : session;
     }
 
     const prefix2 = 'dlinker://login/';
-    if (s.toLowerCase().startsWith(prefix2)) {
-      final value = s.substring(prefix2.length).trim();
-      return value.isEmpty ? null : value;
+    if (value.toLowerCase().startsWith(prefix2)) {
+      final session = value.substring(prefix2.length).trim();
+      return session.isEmpty ? null : session;
     }
 
     return null;
   }
 
   BetRequest? _extractBetRequest(String raw) {
-    final s = raw.trim();
-    const prefix = 'dlinker:coinflip:';
-    if (!s.toLowerCase().startsWith(prefix)) {
-      return null;
-    }
+    final data = raw.trim();
+    if (!data.toLowerCase().startsWith('dlinker:coinflip:')) return null;
 
-    final parts = s.split(':');
-    if (parts.length < 5) {
-      return null;
-    }
+    final parts = data.split(':');
+    if (parts.length < 5) return null;
 
-    return BetRequest(
-      gameId: parts[2],
-      side: parts[3],
-      amount: parts[4],
-    );
+    return BetRequest(gameId: parts[2], side: parts[3], amount: parts[4]);
   }
 
   String? _extractAddress(String raw) {
-    final regex = RegExp(r'0x[a-fA-F0-9]{40}');
-    final match = regex.firstMatch(raw);
-    if (match != null) {
-      return match.group(0);
+    final direct = RegExp(r'0x[a-fA-F0-9]{40}').firstMatch(raw);
+    if (direct != null) {
+      final address = direct.group(0)!;
+      return EthereumAddress.fromHex(address).hexEip55;
     }
 
-    final trimmed = raw.trim();
-    if (trimmed.length >= 42) {
-      final last42 = trimmed.substring(trimmed.length - 42);
-      if (RegExp(r'^0x[a-fA-F0-9]{40}$').hasMatch(last42)) {
-        return last42;
+    if (raw.length >= 42) {
+      final tail = raw.substring(raw.length - 42);
+      if (RegExp(r'0x[a-fA-F0-9]{40}').hasMatch(tail)) {
+        return EthereumAddress.fromHex(tail).hexEip55;
       }
     }
 
     return null;
   }
 
-  void _copyAddress(String value, BuildContext context) {
-    Clipboard.setData(ClipboardData(text: value));
-    _showSnack(AppStrings.tr(context, 'copy_success'));
+  void _queueAuthPrompt(String sessionId) {
+    _pendingAuthSessionId = sessionId;
+    _drainPromptQueue();
+  }
+
+  void _queueBetPrompt(BetRequest request) {
+    _pendingBet = request;
+    _drainPromptQueue();
+  }
+
+  void _drainPromptQueue() {
+    if (!mounted || _isPromptOpen) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _isPromptOpen) return;
+
+      if (_pendingAuthSessionId != null) {
+        final sid = _pendingAuthSessionId!;
+        _pendingAuthSessionId = null;
+        _isPromptOpen = true;
+        await _showAuthDialog(sid);
+        _isPromptOpen = false;
+        _drainPromptQueue();
+        return;
+      }
+
+      if (_pendingBet != null) {
+        final bet = _pendingBet!;
+        _pendingBet = null;
+        _isPromptOpen = true;
+        await _showBetDialog(bet);
+        _isPromptOpen = false;
+        _drainPromptQueue();
+      }
+    });
+  }
+
+  Future<void> _showAuthDialog(String sessionId) async {
+    if (!mounted) return;
+    final approved = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text(T.of(context, 'auth_confirm_title')),
+            content: Text(
+              T.of(context, 'auth_confirm_desc', [sessionId, _walletAddress]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(T.of(context, 'cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(T.of(context, 'auth_confirm_button')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!approved || !mounted) return;
+
+    await _runWithLoading(() async {
+      try {
+        final pubKey = await _keyService.getPublicKeySpkiBase64();
+        await _api.sendAuth(sessionId: sessionId, address: _walletAddress, publicKey: pubKey);
+        if (!mounted) return;
+        _showSnack(T.of(context, 'auth_success_return'));
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack(T.of(context, 'failure_message', [e.toString()]));
+      }
+    });
+  }
+
+  Future<void> _showBetDialog(BetRequest bet) async {
+    if (!mounted) return;
+    final approved = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text(T.of(context, 'bet_confirm_title')),
+            content: Text(
+              T.of(context, 'bet_confirm_desc', [
+                'Coin Flip',
+                bet.side,
+                bet.amount,
+                T.of(context, 'token_symbol'),
+              ]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(T.of(context, 'cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(T.of(context, 'bet_confirm_button')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!approved || !mounted) return;
+
+    await _runWithLoading(() async {
+      try {
+        final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
+        final pubKey = await _keyService.getPublicKeySpkiBase64();
+        await _api.sendCoinFlip(
+          gameId: bet.gameId,
+          address: _walletAddress,
+          side: bet.side,
+          amount: bet.amount,
+          signature: signature,
+          publicKey: pubKey,
+        );
+        if (!mounted) return;
+        _showSnack(T.of(context, 'bet_success'));
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack(T.of(context, 'failure_message', [e.toString()]));
+      }
+    });
   }
 
   void _showSnack(String message) {
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final tokenSymbol = AppStrings.tr(context, 'token_symbol');
+    final tokenSymbol = T.of(context, 'token_symbol');
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          AppStrings.tr(context, 'app_dashboard_title'),
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: Text(T.of(context, 'app_dashboard_title')),
         actions: [
           IconButton(
-            onPressed: () async {
-              await _runWithLoading(() => _syncBalance());
+            onPressed: () {
+              _runWithLoading(() async {
+                await _syncBalance();
+              });
             },
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
-            onPressed: _showSettingsDialog,
+            onPressed: _openSettingsDialog,
             icon: const Icon(Icons.settings),
           ),
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _AssetCard(
-                balance: _balance,
-                address: _derivedAddress.isEmpty
-                    ? AppStrings.tr(context, 'loading')
-                    : _derivedAddress,
-                tokenSymbol: tokenSymbol,
-                onCopy: () => _copyAddress(_derivedAddress, context),
-              ),
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                alignment: WrapAlignment.center,
-                children: [
-                  _ActionButton(
-                    label: AppStrings.tr(context, 'receive'),
-                    icon: Icons.account_balance_wallet,
-                    onTap: _showReceiveDialog,
-                  ),
-                  _ActionButton(
-                    label: AppStrings.tr(context, 'wallet_auth'),
-                    icon: Icons.qr_code_scanner,
-                    onTap: _openGeneralScanner,
-                  ),
-                  _ActionButton(
-                    label: AppStrings.tr(context, 'transfer'),
-                    icon: Icons.send,
-                    onTap: () => _openTransferFlow(isMigration: false),
-                  ),
-                  _ActionButton(
-                    label: AppStrings.tr(context, 'migration'),
-                    icon: Icons.swap_horiz,
-                    onTap: () => _openTransferFlow(isMigration: true),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _isLoading ? null : _requestAirdrop,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                ),
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(
-                        AppStrings.tr(
-                          context,
-                          'request_test_coins',
-                          [tokenSymbol],
-                        ),
+        child: Column(
+          children: [
+            if (_isLoading) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: _walletAddress.isEmpty
+                  ? Center(child: Text(T.of(context, 'loading')))
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          AssetCard(
+                            balance: _balance,
+                            address: _walletAddress,
+                            symbol: tokenSymbol,
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              ActionButton(
+                                icon: Icons.account_balance_wallet,
+                                label: T.of(context, 'receive'),
+                                onTap: _showReceiveDialog,
+                              ),
+                              ActionButton(
+                                icon: Icons.qr_code_scanner,
+                                label: T.of(context, 'wallet_auth'),
+                                onTap: _openGeneralScanner,
+                              ),
+                              ActionButton(
+                                icon: Icons.send,
+                                label: T.of(context, 'transfer'),
+                                onTap: () => _openTransferFlow(isMigration: false),
+                              ),
+                              ActionButton(
+                                icon: Icons.swap_horiz,
+                                label: T.of(context, 'migration'),
+                                onTap: () => _openTransferFlow(isMigration: true),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          FilledButton(
+                            onPressed: _isLoading ? null : _requestAirdrop,
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                            ),
+                            child: Text(T.of(context, 'request_test_coins', [tokenSymbol])),
+                          ),
+                          const SizedBox(height: 20),
+                          NavigationCard(
+                            title: T.of(context, 'transaction_history'),
+                            icon: Icons.history,
+                            onTap: _openHistory,
+                          ),
+                          const SizedBox(height: 12),
+                          NavigationCard(
+                            title: T.of(context, 'contacts'),
+                            icon: Icons.contact_page,
+                            onTap: _openContacts,
+                          ),
+                        ],
                       ),
-              ),
-              const SizedBox(height: 16),
-              _NavigationCard(
-                title: AppStrings.tr(context, 'transaction_history'),
-                icon: Icons.history,
-                onTap: _openHistory,
-              ),
-              const SizedBox(height: 10),
-              _NavigationCard(
-                title: AppStrings.tr(context, 'contacts'),
-                icon: Icons.contact_page,
-                onTap: _openContacts,
-              ),
-            ],
-          ),
+                    ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _AssetCard extends StatelessWidget {
-  const _AssetCard({
+class ActionButton extends StatelessWidget {
+  const ActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        FilledButton.tonal(
+          onPressed: onTap,
+          style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            minimumSize: const Size(64, 56),
+            padding: EdgeInsets.zero,
+          ),
+          child: Icon(icon, size: 24),
+        ),
+        const SizedBox(height: 6),
+        Text(label, style: const TextStyle(fontSize: 11)),
+      ],
+    );
+  }
+}
+
+class AssetCard extends StatelessWidget {
+  const AssetCard({
+    super.key,
     required this.balance,
     required this.address,
-    required this.tokenSymbol,
-    required this.onCopy,
+    required this.symbol,
   });
 
   final String balance;
   final String address;
-  final String tokenSymbol;
-  final VoidCallback onCopy;
+  final String symbol;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: LinearGradient(
-            colors: [
-              Theme.of(context).colorScheme.primaryContainer,
-              Theme.of(context).colorScheme.secondaryContainer,
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              AppStrings.tr(context, 'my_assets'),
-              style: Theme.of(context).textTheme.titleSmall,
+              T.of(context, 'my_assets'),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 6),
             Text(
-              AppStrings.tr(context, 'balance_format', [balance, tokenSymbol]),
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+              T.of(context, 'balance_format', [balance, symbol]),
+              style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 18),
             Text(
-              AppStrings.tr(context, 'device_wallet_address'),
-              style: Theme.of(context).textTheme.labelMedium,
+              T.of(context, 'device_wallet_address'),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: 4),
             Row(
@@ -1144,11 +987,18 @@ class _AssetCard extends StatelessWidget {
                     address,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: const TextStyle(fontSize: 11),
                   ),
                 ),
                 IconButton(
-                  onPressed: onCopy,
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: address));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(T.of(context, 'copy_success'))),
+                      );
+                    }
+                  },
                   icon: const Icon(Icons.copy, size: 18),
                 ),
               ],
@@ -1160,48 +1010,9 @@ class _AssetCard extends StatelessWidget {
   }
 }
 
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 88,
-      child: Column(
-        children: [
-          FilledButton.tonal(
-            onPressed: onTap,
-            style: FilledButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              minimumSize: const Size(56, 56),
-              padding: EdgeInsets.zero,
-            ),
-            child: Icon(icon),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NavigationCard extends StatelessWidget {
-  const _NavigationCard({
+class NavigationCard extends StatelessWidget {
+  const NavigationCard({
+    super.key,
     required this.title,
     required this.icon,
     required this.onTap,
@@ -1214,27 +1025,43 @@ class _NavigationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: ListTile(
+      child: InkWell(
         onTap: onTap,
-        leading: Icon(icon),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          child: Row(
+            children: [
+              Icon(icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 16),
+            ],
+          ),
         ),
-        trailing: const Icon(Icons.chevron_right),
       ),
     );
   }
 }
 
-class _ScannerDialog extends StatefulWidget {
-  const _ScannerDialog();
+class ScannerDialog extends StatefulWidget {
+  const ScannerDialog({
+    super.key,
+    required this.scannerSupported,
+  });
+
+  final bool scannerSupported;
 
   @override
-  State<_ScannerDialog> createState() => _ScannerDialogState();
+  State<ScannerDialog> createState() => _ScannerDialogState();
 }
 
-class _ScannerDialogState extends State<_ScannerDialog> {
+class _ScannerDialogState extends State<ScannerDialog> {
   final MobileScannerController _controller = MobileScannerController();
   bool _handled = false;
 
@@ -1244,80 +1071,108 @@ class _ScannerDialogState extends State<_ScannerDialog> {
     super.dispose();
   }
 
-  Future<void> _openManualCodeDialog() async {
+  void _emit(String value) {
+    if (_handled || value.trim().isEmpty) return;
+    _handled = true;
+    Navigator.of(context).pop(value.trim());
+  }
+
+  Future<void> _openManualInputDialog() async {
     final controller = TextEditingController();
-    final raw = await showDialog<String>(
+    final manual = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'manual_code_entry')),
+      builder: (_) => AlertDialog(
+        title: Text(T.of(context, 'manual_code_entry')),
         content: TextField(
           controller: controller,
           decoration: InputDecoration(
-            labelText: AppStrings.tr(context, 'manual_code_hint'),
-            border: const OutlineInputBorder(),
+            labelText: T.of(context, 'manual_code_hint'),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(AppStrings.tr(context, 'cancel')),
+            child: Text(T.of(context, 'cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: Text(AppStrings.tr(context, 'confirm')),
+            child: Text(T.of(context, 'confirm')),
           ),
         ],
       ),
     );
 
-    controller.dispose();
-    if (!mounted || raw == null || raw.trim().isEmpty) {
-      return;
-    }
-
-    Navigator.of(context).pop(raw.trim());
+    if (!mounted || manual == null || manual.isEmpty) return;
+    _emit(manual);
   }
 
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      insetPadding: const EdgeInsets.all(20),
       child: SizedBox(
         width: 420,
-        height: 480,
+        height: 470,
         child: Column(
           children: [
-            Expanded(
-              child: MobileScanner(
-                controller: _controller,
-                onDetect: (capture) {
-                  if (_handled) {
-                    return;
-                  }
-                  final value = capture.barcodes.firstOrNull?.rawValue;
-                  if (value == null || value.trim().isEmpty) {
-                    return;
-                  }
-                  _handled = true;
-                  Navigator.of(context).pop(value.trim());
-                },
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 6, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      T.of(context, 'scan'),
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
               ),
             ),
+            Expanded(
+              child: widget.scannerSupported
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: MobileScanner(
+                          controller: _controller,
+                          onDetect: (capture) {
+                            if (capture.barcodes.isEmpty) return;
+                            final raw = capture.barcodes.first.rawValue;
+                            if (raw == null) return;
+                            _emit(raw);
+                          },
+                        ),
+                      ),
+                    )
+                  : Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          T.of(context, 'camera_permission_required'),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+            ),
             Padding(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _openManualCodeDialog,
-                      child: Text(AppStrings.tr(context, 'manual_code_entry')),
+                      onPressed: _openManualInputDialog,
+                      child: Text(T.of(context, 'manual_code_entry')),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: FilledButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: Text(AppStrings.tr(context, 'close')),
+                      child: Text(T.of(context, 'close')),
                     ),
                   ),
                 ],
@@ -1332,9 +1187,9 @@ class _ScannerDialogState extends State<_ScannerDialog> {
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({
+    super.key,
     required this.api,
     required this.keyService,
-    super.key,
   });
 
   final DLinkerApi api;
@@ -1347,146 +1202,97 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   final ScrollController _scrollController = ScrollController();
 
-  List<HistoryItem> _history = <HistoryItem>[];
   String _walletAddress = '';
-  int _page = 1;
+  List<HistoryItem> _history = const [];
+  int _nextPage = 1;
   bool _hasMore = true;
-  bool _isLoading = false;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _bootstrap();
+    _init();
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _bootstrap() async {
-    try {
-      final address = await widget.keyService.getWalletAddress();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _walletAddress = address;
-      });
-      await _refresh();
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppStrings.tr(context, 'failure_message', [e.toString()]),
-          ),
-        ),
-      );
-    }
+  Future<void> _init() async {
+    final address = await widget.keyService.getWalletAddress();
+    if (!mounted) return;
+    setState(() {
+      _walletAddress = address;
+      _history = [];
+      _nextPage = 1;
+      _hasMore = true;
+    });
+    await _loadNextPage();
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _isLoading || !_hasMore) {
-      return;
-    }
-
-    final threshold = _scrollController.position.maxScrollExtent - 280;
+    if (!_scrollController.hasClients) return;
+    final threshold = _scrollController.position.maxScrollExtent - 320;
     if (_scrollController.position.pixels >= threshold) {
-      _loadMore();
+      _loadNextPage();
+    }
+  }
+
+  Future<void> _loadNextPage() async {
+    if (_loading || !_hasMore || _walletAddress.isEmpty) return;
+
+    setState(() {
+      _loading = true;
+    });
+
+    try {
+      final response = await widget.api.getHistory(
+        walletAddress: _walletAddress,
+        page: _nextPage,
+        limit: 20,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _history = [..._history, ...response.history];
+        _nextPage = _nextPage + 1;
+        _hasMore = response.hasMore;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(T.of(context, 'failure_message', [e.toString()]))),
+        );
+      }
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
     }
   }
 
   Future<void> _refresh() async {
-    if (_walletAddress.isEmpty) {
-      return;
-    }
-
+    if (!mounted) return;
     setState(() {
-      _isLoading = true;
+      _history = [];
+      _nextPage = 1;
+      _hasMore = true;
     });
-
-    try {
-      final page = await widget.api.getHistory(walletAddress: _walletAddress, page: 1);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _history = page.items;
-        _page = 2;
-        _hasMore = page.hasMore;
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppStrings.tr(context, 'failure_message', [e.toString()]),
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (_walletAddress.isEmpty || _isLoading || !_hasMore) {
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final page = await widget.api.getHistory(walletAddress: _walletAddress, page: _page);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _history = <HistoryItem>[..._history, ...page.items];
-        _page += 1;
-        _hasMore = page.hasMore;
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppStrings.tr(context, 'failure_message', [e.toString()]),
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    await _loadNextPage();
   }
 
   @override
   Widget build(BuildContext context) {
-    final symbol = AppStrings.tr(context, 'token_symbol');
+    final symbol = T.of(context, 'token_symbol');
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          AppStrings.tr(context, 'transaction_history'),
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: Text(T.of(context, 'transaction_history')),
         actions: [
           IconButton(
             onPressed: _refresh,
@@ -1494,71 +1300,73 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
         ],
       ),
-      body: _history.isEmpty && !_isLoading
+      body: _history.isEmpty && !_loading
           ? Center(
               child: Text(
-                AppStrings.tr(context, 'tx_no_history'),
+                T.of(context, 'tx_no_history'),
                 style: TextStyle(color: Theme.of(context).colorScheme.outline),
               ),
             )
           : ListView.separated(
               controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              itemCount: _history.length + (_isLoading ? 1 : 0),
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              padding: const EdgeInsets.all(16),
               itemBuilder: (context, index) {
                 if (index >= _history.length) {
                   return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
+                    padding: EdgeInsets.all(16),
                     child: Center(child: CircularProgressIndicator()),
                   );
                 }
 
                 final item = _history[index];
                 final isSend = item.type.toLowerCase() == 'send';
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                  leading: CircleAvatar(
-                    backgroundColor: isSend
-                        ? const Color(0xFFFFEBEE)
-                        : const Color(0xFFE8F5E9),
-                    child: Icon(
-                      isSend ? Icons.north_east : Icons.south_west,
-                      color: isSend ? Colors.red : const Color(0xFF4CAF50),
-                    ),
-                  ),
-                  title: Text(
-                    isSend
-                        ? AppStrings.tr(context, 'tx_send')
-                        : AppStrings.tr(context, 'tx_receive'),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.counterParty,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+
+                return Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: isSend
+                          ? Colors.red.withOpacity(0.12)
+                          : Colors.green.withOpacity(0.12),
+                      child: Icon(
+                        isSend ? Icons.north_east : Icons.south_west,
+                        color: isSend ? Colors.red : Colors.green,
                       ),
-                      Text(
-                        item.date,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.outline,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  trailing: Text(
-                    '${isSend ? '-' : '+'} ${item.amount} $symbol',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      color: isSend ? null : const Color(0xFF4CAF50),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isSend ? T.of(context, 'tx_send') : T.of(context, 'tx_receive'),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            item.counterParty,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          Text(
+                            item.date,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      '${isSend ? '-' : '+'} ${item.amount} $symbol',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: isSend ? null : Colors.green,
+                      ),
+                    ),
+                  ],
                 );
               },
+              separatorBuilder: (_, __) => const Divider(height: 24),
+              itemCount: _history.length + (_loading ? 1 : 0),
             ),
     );
   }
@@ -1566,9 +1374,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({
+    super.key,
     required this.selectionMode,
     required this.repository,
-    super.key,
   });
 
   final bool selectionMode;
@@ -1579,92 +1387,73 @@ class ContactsScreen extends StatefulWidget {
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
-  List<ContactModel> _contacts = <ContactModel>[];
+  List<ContactModel> _contacts = const [];
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadContacts();
+    _load();
   }
 
-  Future<void> _loadContacts() async {
-    final list = await widget.repository.getAllContacts();
-    if (!mounted) {
-      return;
-    }
+  Future<void> _load() async {
+    final contacts = await widget.repository.getAll();
+    if (!mounted) return;
     setState(() {
-      _contacts = list;
+      _contacts = contacts;
       _loading = false;
     });
   }
 
-  Future<void> _addContactDialog() async {
+  Future<void> _addContact() async {
     final nameController = TextEditingController();
-    final addrController = TextEditingController();
+    final addressController = TextEditingController();
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppStrings.tr(context, 'add_contact')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: InputDecoration(
-                labelText: AppStrings.tr(context, 'contact_name'),
-                border: const OutlineInputBorder(),
-              ),
+    final save = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text(T.of(context, 'add_contact')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(labelText: T.of(context, 'contact_name')),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: addressController,
+                  decoration: InputDecoration(labelText: T.of(context, 'wallet_address')),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: addrController,
-              decoration: InputDecoration(
-                labelText: AppStrings.tr(context, 'wallet_address'),
-                border: const OutlineInputBorder(),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(T.of(context, 'cancel')),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(AppStrings.tr(context, 'cancel')),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(T.of(context, 'confirm')),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(AppStrings.tr(context, 'confirm')),
-          ),
-        ],
-      ),
-    );
+        ) ??
+        false;
 
-    if (confirmed == true) {
-      final name = nameController.text.trim();
-      final address = addrController.text.trim();
-      if (name.isNotEmpty && address.isNotEmpty) {
-        await widget.repository.addContact(name: name, address: address);
-        await _loadContacts();
-      }
-    }
+    if (!save) return;
 
-    nameController.dispose();
-    addrController.dispose();
+    final name = nameController.text.trim();
+    final address = addressController.text.trim();
+    if (name.isEmpty || address.isEmpty) return;
+
+    await widget.repository.add(name: name, address: address);
+    await _load();
   }
 
   Future<void> _deleteContact(ContactModel contact) async {
-    await widget.repository.deleteContact(contact.id);
-    await _loadContacts();
-  }
-
-  void _copy(String text) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(AppStrings.tr(context, 'copy_success'))),
-      );
+    await widget.repository.delete(contact.id);
+    await _load();
   }
 
   @override
@@ -1672,22 +1461,21 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.selectionMode
-              ? AppStrings.tr(context, 'select_contact')
-              : AppStrings.tr(context, 'contacts'),
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          widget.selectionMode ? T.of(context, 'select_contact') : T.of(context, 'contacts'),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addContactDialog,
-        child: const Icon(Icons.add),
+        actions: [
+          IconButton(
+            onPressed: _addContact,
+            icon: const Icon(Icons.add),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _contacts.isEmpty
               ? Center(
                   child: Text(
-                    AppStrings.tr(context, 'no_contacts'),
+                    T.of(context, 'no_contacts'),
                     style: TextStyle(color: Theme.of(context).colorScheme.outline),
                   ),
                 )
@@ -1697,28 +1485,117 @@ class _ContactsScreenState extends State<ContactsScreen> {
                   itemBuilder: (context, index) {
                     final contact = _contacts[index];
                     return ListTile(
-                      title: Text(
-                        contact.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      title: Text(contact.name),
+                      subtitle: Text(
+                        contact.address,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      subtitle: Text(contact.address),
-                      onTap: () {
-                        if (widget.selectionMode) {
-                          Navigator.of(context).pop(contact.address);
-                        } else {
-                          _copy(contact.address);
-                        }
-                      },
                       trailing: widget.selectionMode
                           ? null
                           : IconButton(
                               onPressed: () => _deleteContact(contact),
                               icon: const Icon(Icons.delete, color: Colors.red),
                             ),
+                      onTap: () async {
+                        if (widget.selectionMode) {
+                          Navigator.of(context).pop(contact.address);
+                          return;
+                        }
+
+                        await Clipboard.setData(ClipboardData(text: contact.address));
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(T.of(context, 'copy_success'))),
+                        );
+                      },
                     );
                   },
                 ),
     );
+  }
+}
+
+class ContactModel {
+  const ContactModel({
+    required this.id,
+    required this.name,
+    required this.address,
+  });
+
+  final int id;
+  final String name;
+  final String address;
+
+  ContactModel copyWith({int? id, String? name, String? address}) {
+    return ContactModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      address: address ?? this.address,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'address': address,
+    };
+  }
+
+  factory ContactModel.fromJson(Map<String, dynamic> json) {
+    return ContactModel(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] ?? '').toString(),
+      address: (json['address'] ?? '').toString(),
+    );
+  }
+}
+
+class ContactRepository {
+  static const String _key = 'contacts';
+
+  Future<List<ContactModel>> getAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key);
+    if (raw == null || raw.isEmpty) return [];
+
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return [];
+
+    final contacts = decoded
+        .whereType<Map>()
+        .map((e) => ContactModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+
+    contacts.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return contacts;
+  }
+
+  Future<void> add({required String name, required String address}) async {
+    final contacts = await getAll();
+    final nextId = contacts.isEmpty
+        ? 1
+        : contacts.map((e) => e.id).reduce(max) + 1;
+
+    final updated = [
+      ...contacts,
+      ContactModel(id: nextId, name: name, address: address),
+    ];
+
+    await _save(updated);
+  }
+
+  Future<void> delete(int id) async {
+    final contacts = await getAll();
+    final updated = contacts.where((c) => c.id != id).toList();
+    await _save(updated);
+  }
+
+  Future<void> _save(List<ContactModel> contacts) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(contacts.map((e) => e.toJson()).toList());
+    await prefs.setString(_key, encoded);
   }
 }
 
@@ -1727,52 +1604,19 @@ class DLinkerApi {
 
   final http.Client _client = http.Client();
 
-  void dispose() {
-    _client.close();
-  }
-
-  Future<Map<String, dynamic>> _post(
-    String endpoint,
-    Map<String, dynamic> body,
-  ) async {
-    final response = await _client
-        .post(
-          Uri.parse('$_baseUrl$endpoint'),
-          headers: <String, String>{
-            'Content-Type': 'application/json; charset=utf-8',
-            'User-Agent': 'D-Linker-Flutter-App',
-          },
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 60));
-
-    final text = response.body;
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('HTTP ${response.statusCode}: $text');
-    }
-
-    final decoded = jsonDecode(text);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid API response format');
-    }
-
-    return decoded;
-  }
-
   Future<void> sendAuth({
     required String sessionId,
     required String address,
     required String publicKey,
   }) async {
-    final data = await _post('auth', <String, dynamic>{
+    final json = await _post('auth', {
       'sessionId': sessionId,
       'address': address.toLowerCase(),
       'publicKey': publicKey,
     });
 
-    if (!(data['success'] == true)) {
-      throw Exception((data['error'] ?? '授權失敗').toString());
-    }
+    if (json['success'] == true) return;
+    throw Exception((json['error'] ?? 'Auth failed').toString());
   }
 
   Future<void> sendCoinFlip({
@@ -1783,7 +1627,7 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    final data = await _post('coinflip', <String, dynamic>{
+    final json = await _post('coinflip', {
       'gameId': gameId,
       'address': address.toLowerCase(),
       'side': side,
@@ -1792,9 +1636,8 @@ class DLinkerApi {
       'publicKey': publicKey,
     });
 
-    if (!(data['success'] == true)) {
-      throw Exception((data['error'] ?? '下注失敗').toString());
-    }
+    if (json['success'] == true) return;
+    throw Exception((json['error'] ?? 'Bet failed').toString());
   }
 
   Future<String> requestAirdrop({
@@ -1802,29 +1645,29 @@ class DLinkerApi {
     required String publicKey,
     required String signature,
   }) async {
-    final data = await _post('airdrop', <String, dynamic>{
+    final json = await _post('airdrop', {
       'address': walletAddress.toLowerCase(),
       'publicKey': publicKey,
       'signature': signature,
     });
 
-    if (!(data['success'] == true)) {
-      throw Exception((data['error'] ?? '入金失敗').toString());
+    if (json['success'] == true) {
+      return (json['txHash'] ?? 'Success').toString();
     }
 
-    return (data['txHash'] ?? 'Success').toString();
+    throw Exception((json['error'] ?? 'Airdrop failed').toString());
   }
 
   Future<String> syncBalance(String walletAddress) async {
-    final data = await _post('get-balance', <String, dynamic>{
+    final json = await _post('get-balance', {
       'address': walletAddress.toLowerCase(),
     });
 
-    if (data['balance'] == null) {
-      throw Exception((data['error'] ?? '查詢失敗').toString());
+    if (json.containsKey('balance')) {
+      return json['balance'].toString();
     }
 
-    return data['balance'].toString();
+    throw Exception((json['error'] ?? 'Balance fetch failed').toString());
   }
 
   Future<String> transfer({
@@ -1834,7 +1677,7 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    final data = await _post('transfer', <String, dynamic>{
+    final json = await _post('transfer', {
       'from': from.toLowerCase(),
       'to': to.toLowerCase(),
       'amount': amount,
@@ -1842,52 +1685,78 @@ class DLinkerApi {
       'publicKey': publicKey,
     });
 
-    if (!(data['success'] == true)) {
-      throw Exception((data['error'] ?? '轉帳失敗').toString());
+    if (json['success'] == true) {
+      return (json['txHash'] ?? '').toString();
     }
 
-    return data['txHash'].toString();
+    throw Exception((json['error'] ?? 'Transfer failed').toString());
   }
 
-  Future<HistoryPage> getHistory({
+  Future<HistoryResponse> getHistory({
     required String walletAddress,
-    int page = 1,
+    required int page,
     int limit = 20,
   }) async {
-    final data = await _post('history', <String, dynamic>{
+    final json = await _post('history', {
       'address': walletAddress.toLowerCase(),
       'page': page,
       'limit': limit,
     });
 
-    if (!(data['success'] == true)) {
-      throw Exception((data['error'] ?? '無法取得紀錄').toString());
+    if (json['success'] != true) {
+      throw Exception((json['error'] ?? 'Unable to get history').toString());
     }
 
-    final List<dynamic> list = (data['history'] as List<dynamic>? ?? <dynamic>[]);
-    final items = list
-        .whereType<Map<String, dynamic>>()
-        .map(HistoryItem.fromJson)
-        .toList(growable: false);
+    final listRaw = json['history'];
+    final history = <HistoryItem>[];
+    if (listRaw is List) {
+      for (final item in listRaw) {
+        if (item is Map<String, dynamic>) {
+          history.add(HistoryItem.fromJson(item));
+        } else if (item is Map) {
+          history.add(HistoryItem.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
 
-    return HistoryPage(
-      page: (data['page'] as num?)?.toInt() ?? 1,
-      hasMore: data['hasMore'] == true,
-      items: items,
+    return HistoryResponse(
+      page: (json['page'] as num?)?.toInt() ?? page,
+      hasMore: (json['hasMore'] as bool?) ?? false,
+      history: history,
     );
   }
-}
 
-class HistoryPage {
-  const HistoryPage({
-    required this.page,
-    required this.hasMore,
-    required this.items,
-  });
+  Future<Map<String, dynamic>> _post(String endpoint, Map<String, dynamic> body) async {
+    final url = Uri.parse('$_baseUrl$endpoint');
 
-  final int page;
-  final bool hasMore;
-  final List<HistoryItem> items;
+    final response = await _client
+        .post(
+          url,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'User-Agent': 'D-Linker-Flutter-App',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    final data = response.body;
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}: $data');
+    }
+
+    final decoded = jsonDecode(data);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+
+    throw Exception('Invalid JSON response');
+  }
 }
 
 class HistoryItem {
@@ -1901,6 +1770,14 @@ class HistoryItem {
     required this.blockNumber,
   });
 
+  final String type;
+  final String amount;
+  final String counterParty;
+  final int timestamp;
+  final String date;
+  final String txHash;
+  final String blockNumber;
+
   factory HistoryItem.fromJson(Map<String, dynamic> json) {
     return HistoryItem(
       type: (json['type'] ?? 'unknown').toString(),
@@ -1912,14 +1789,310 @@ class HistoryItem {
       blockNumber: (json['blockNumber'] ?? '').toString(),
     );
   }
+}
 
-  final String type;
-  final String amount;
-  final String counterParty;
-  final int timestamp;
-  final String date;
-  final String txHash;
-  final String blockNumber;
+class HistoryResponse {
+  const HistoryResponse({
+    required this.page,
+    required this.hasMore,
+    required this.history,
+  });
+
+  final int page;
+  final bool hasMore;
+  final List<HistoryItem> history;
+}
+
+class KeyService {
+  static const String _privateKeyStorageKey = 'dlinker_private_key_hex_v1';
+
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  final ECDomainParameters _domain = ECDomainParameters('secp256k1');
+
+  Future<void> ensureKeyPair() async {
+    final existing = await _readPrivateKeyHex();
+    if (existing != null && existing.isNotEmpty) return;
+
+    final privateScalar = _generatePrivateScalar();
+    final privateHex = privateScalar.toRadixString(16).padLeft(64, '0');
+    await _writePrivateKeyHex(privateHex);
+  }
+
+  Future<String> getWalletAddress() async {
+    final privateKey = await _getPrivateScalar();
+    final point = (_domain.G * privateKey)!;
+    final x = _bigIntTo32Bytes(point.x!.toBigInteger()!);
+    final y = _bigIntTo32Bytes(point.y!.toBigInteger()!);
+
+    final noPrefix = Uint8List.fromList([...x, ...y]);
+    final hash = web3crypto.keccak256(noPrefix);
+    final addressBytes = Uint8List.fromList(hash.sublist(hash.length - 20));
+    final raw = web3crypto.bytesToHex(addressBytes, include0x: true);
+
+    return EthereumAddress.fromHex(raw).hexEip55;
+  }
+
+  Future<String> getPublicKeySpkiBase64() async {
+    final privateKey = await _getPrivateScalar();
+    final point = (_domain.G * privateKey)!;
+
+    final x = _bigIntTo32Bytes(point.x!.toBigInteger()!);
+    final y = _bigIntTo32Bytes(point.y!.toBigInteger()!);
+    final uncompressed = Uint8List.fromList([0x04, ...x, ...y]);
+
+    final header = Uint8List.fromList([
+      0x30,
+      0x56,
+      0x30,
+      0x10,
+      0x06,
+      0x07,
+      0x2A,
+      0x86,
+      0x48,
+      0xCE,
+      0x3D,
+      0x02,
+      0x01,
+      0x06,
+      0x05,
+      0x2B,
+      0x81,
+      0x04,
+      0x00,
+      0x0A,
+      0x03,
+      0x42,
+      0x00,
+    ]);
+
+    final spki = Uint8List.fromList([...header, ...uncompressed]);
+    return base64Encode(spki);
+  }
+
+  Future<String> signData(String data) async {
+    final privateScalar = await _getPrivateScalar();
+    final privateKey = ECPrivateKey(privateScalar, _domain);
+
+    final digest = SHA256Digest().process(Uint8List.fromList(utf8.encode(data)));
+
+    final signer = ECDSASigner(null, HMac(SHA256Digest(), 64));
+    signer.init(true, PrivateKeyParameter<ECPrivateKey>(privateKey));
+
+    final signature = signer.generateSignature(digest) as ECSignature;
+
+    var s = signature.s;
+    final halfN = _domain.n >> 1;
+    if (s > halfN) {
+      s = _domain.n - s;
+    }
+
+    final der = _encodeDerSequence([
+      _encodeDerInteger(signature.r),
+      _encodeDerInteger(s),
+    ]);
+
+    return base64Encode(der);
+  }
+
+  Future<BigInt> _getPrivateScalar() async {
+    await ensureKeyPair();
+    final hex = await _readPrivateKeyHex();
+    if (hex == null || hex.isEmpty) {
+      throw Exception('Missing private key');
+    }
+    return BigInt.parse(hex, radix: 16);
+  }
+
+  BigInt _generatePrivateScalar() {
+    final random = Random.secure();
+
+    while (true) {
+      final bytes = Uint8List(32);
+      for (var i = 0; i < bytes.length; i++) {
+        bytes[i] = random.nextInt(256);
+      }
+      final value = _bytesToBigInt(bytes);
+      if (value > BigInt.zero && value < _domain.n) {
+        return value;
+      }
+    }
+  }
+
+  Future<String?> _readPrivateKeyHex() async {
+    try {
+      return await _secureStorage.read(key: _privateKeyStorageKey);
+    } catch (_) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_privateKeyStorageKey);
+    }
+  }
+
+  Future<void> _writePrivateKeyHex(String value) async {
+    try {
+      await _secureStorage.write(key: _privateKeyStorageKey, value: value);
+    } catch (_) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_privateKeyStorageKey, value);
+    }
+  }
+
+  Uint8List _bigIntTo32Bytes(BigInt value) {
+    final bytes = _bigIntToBytes(value);
+    if (bytes.length == 32) return bytes;
+    if (bytes.length > 32) {
+      return Uint8List.fromList(bytes.sublist(bytes.length - 32));
+    }
+    return Uint8List.fromList(List<int>.filled(32 - bytes.length, 0) + bytes);
+  }
+
+  Uint8List _bigIntToBytes(BigInt number) {
+    final hex = number.toRadixString(16);
+    final padded = hex.length.isOdd ? '0$hex' : hex;
+    final result = Uint8List(padded.length ~/ 2);
+    for (var i = 0; i < result.length; i++) {
+      final start = i * 2;
+      result[i] = int.parse(padded.substring(start, start + 2), radix: 16);
+    }
+    return result;
+  }
+
+  BigInt _bytesToBigInt(Uint8List bytes) {
+    var result = BigInt.zero;
+    for (final b in bytes) {
+      result = (result << 8) | BigInt.from(b);
+    }
+    return result;
+  }
+
+  Uint8List _encodeDerInteger(BigInt value) {
+    var bytes = _bigIntToBytes(value);
+    if (bytes.isEmpty) {
+      bytes = Uint8List.fromList([0]);
+    }
+
+    if (bytes.first & 0x80 != 0) {
+      bytes = Uint8List.fromList([0, ...bytes]);
+    }
+
+    return Uint8List.fromList([
+      0x02,
+      ..._encodeDerLength(bytes.length),
+      ...bytes,
+    ]);
+  }
+
+  Uint8List _encodeDerSequence(List<Uint8List> items) {
+    final content = Uint8List.fromList(items.expand((e) => e).toList());
+    return Uint8List.fromList([
+      0x30,
+      ..._encodeDerLength(content.length),
+      ...content,
+    ]);
+  }
+
+  Uint8List _encodeDerLength(int length) {
+    if (length < 128) {
+      return Uint8List.fromList([length]);
+    }
+
+    final bytes = <int>[];
+    var value = length;
+    while (value > 0) {
+      bytes.insert(0, value & 0xFF);
+      value >>= 8;
+    }
+
+    return Uint8List.fromList([0x80 | bytes.length, ...bytes]);
+  }
+}
+
+class NotificationService {
+  NotificationService._();
+
+  static final NotificationService instance = NotificationService._();
+
+  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  bool _initialized = false;
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const darwin = DarwinInitializationSettings();
+    const settings = InitializationSettings(
+      android: android,
+      iOS: darwin,
+      macOS: darwin,
+    );
+
+    await _plugin.initialize(settings);
+    _initialized = true;
+  }
+
+  Future<void> requestPermissions() async {
+    await initialize();
+
+    await _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+
+    await _plugin
+        .resolvePlatformSpecificImplementation<DarwinFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(alert: true, badge: true, sound: true);
+  }
+
+  Future<void> showBalanceNotification({required double amount, required double total}) async {
+    await initialize();
+
+    const android = AndroidNotificationDetails(
+      'balance_alerts',
+      'Balance Alerts',
+      channelDescription: 'Notify when account balance increases',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+    );
+
+    const details = NotificationDetails(
+      android: android,
+      iOS: DarwinNotificationDetails(),
+      macOS: DarwinNotificationDetails(),
+    );
+
+    final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final title = 'Token Deposit';
+    final body =
+        'Received ${amount.toStringAsFixed(2)} tokens. Current balance: ${total.toStringAsFixed(2)}';
+
+    await _plugin.show(id, title, body, details);
+  }
+}
+
+class AppStorage {
+  static const String _languageKey = 'app_language';
+  static const String _lastBalanceKey = 'last_known_balance';
+
+  static Future<AppLanguage> getLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_languageKey) ?? 'system';
+    return AppLanguageTag.fromTag(raw);
+  }
+
+  static Future<void> setLanguage(AppLanguage language) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_languageKey, language.tag);
+  }
+
+  static Future<double> getLastKnownBalance() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lastBalanceKey) ?? '0.0';
+    return double.tryParse(raw) ?? 0.0;
+  }
+
+  static Future<void> setLastKnownBalance(String balance) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastBalanceKey, balance);
+  }
 }
 
 class BetRequest {
@@ -1934,309 +2107,24 @@ class BetRequest {
   final String amount;
 }
 
-class KeyService {
-  KeyService();
+enum AddressInputAction { confirm, scan, contacts }
 
-  static const String _storagePrivateKey = 'dlinker.private_key.hex.v1';
-
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
-  final ECDomainParameters _domain = ECDomainParameters('secp256k1');
-
-  Future<void> ensureKeyPair() async {
-    await _getOrCreatePrivateKey();
-  }
-
-  Future<String> getWalletAddress() async {
-    final privateKey = await _getOrCreatePrivateKey();
-    final pub = _derivePublicPoint(privateKey);
-    final x = _bigIntTo32(pub.x!.toBigInteger()!);
-    final y = _bigIntTo32(pub.y!.toBigInteger()!);
-
-    final uncompressedNoPrefix = Uint8List.fromList(<int>[...x, ...y]);
-    final hash = web3crypto.keccak256(uncompressedNoPrefix);
-    final addressHex = web3crypto.bytesToHex(
-      Uint8List.fromList(hash.sublist(hash.length - 20)),
-      include0x: true,
-    );
-
-    return EthereumAddress.fromHex(addressHex).hexEip55;
-  }
-
-  Future<String> getPublicKeySpkiBase64() async {
-    final privateKey = await _getOrCreatePrivateKey();
-    final pub = _derivePublicPoint(privateKey);
-
-    final x = _bigIntTo32(pub.x!.toBigInteger()!);
-    final y = _bigIntTo32(pub.y!.toBigInteger()!);
-    final uncompressedWithPrefix = Uint8List.fromList(<int>[0x04, ...x, ...y]);
-
-    final algorithm = ASN1Sequence()
-      ..add(ASN1ObjectIdentifier.fromIdentifierString('1.2.840.10045.2.1'))
-      ..add(ASN1ObjectIdentifier.fromIdentifierString('1.3.132.0.10'));
-
-    final top = ASN1Sequence()
-      ..add(algorithm)
-      ..add(ASN1BitString(stringValues: uncompressedWithPrefix));
-
-    return base64Encode(top.encodedBytes);
-  }
-
-  Future<String> signData(String message) async {
-    final privateKey = await _getOrCreatePrivateKey();
-    final ecPrivate = ECPrivateKey(privateKey, _domain);
-
-    final digest = SHA256Digest().process(Uint8List.fromList(utf8.encode(message)));
-    final signer = ECDSASigner(null, HMac(SHA256Digest(), 64));
-    signer.init(true, PrivateKeyParameter<ECPrivateKey>(ecPrivate));
-
-    final signature = signer.generateSignature(digest) as ECSignature;
-
-    final der = ASN1Sequence()
-      ..add(ASN1Integer(signature.r))
-      ..add(ASN1Integer(signature.s));
-
-    return base64Encode(der.encodedBytes);
-  }
-
-  Future<BigInt> _getOrCreatePrivateKey() async {
-    final stored = await _storage.read(key: _storagePrivateKey);
-    if (stored != null && stored.isNotEmpty) {
-      return BigInt.parse(stored, radix: 16);
-    }
-
-    final created = _generateValidPrivateKey();
-    await _storage.write(key: _storagePrivateKey, value: created.toRadixString(16));
-    return created;
-  }
-
-  ECPoint _derivePublicPoint(BigInt privateKey) {
-    return _domain.G * privateKey;
-  }
-
-  BigInt _generateValidPrivateKey() {
-    final random = Random.secure();
-    final max = _domain.n;
-
-    while (true) {
-      final bytes = Uint8List(32);
-      for (var i = 0; i < bytes.length; i++) {
-        bytes[i] = random.nextInt(256);
-      }
-      final d = _bytesToBigInt(bytes);
-      if (d > BigInt.zero && d < max) {
-        return d;
-      }
-    }
-  }
-
-  Uint8List _bigIntTo32(BigInt value) {
-    final bytes = <int>[];
-    var v = value;
-    while (v > BigInt.zero) {
-      bytes.insert(0, (v & BigInt.from(0xff)).toInt());
-      v = v >> 8;
-    }
-    while (bytes.length < 32) {
-      bytes.insert(0, 0);
-    }
-    return Uint8List.fromList(bytes.take(32).toList(growable: false));
-  }
-
-  BigInt _bytesToBigInt(Uint8List bytes) {
-    var result = BigInt.zero;
-    for (final b in bytes) {
-      result = (result << 8) | BigInt.from(b);
-    }
-    return result;
-  }
-}
-
-class NotificationService {
-  NotificationService._();
-
-  static final NotificationService instance = NotificationService._();
-
-  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
-  bool _initialized = false;
-
-  Future<void> initialize() async {
-    if (_initialized) {
-      return;
-    }
-
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosInit = DarwinInitializationSettings();
-
-    const initSettings = InitializationSettings(
-      android: androidInit,
-      iOS: iosInit,
-      macOS: iosInit,
-    );
-
-    await _plugin.initialize(initSettings);
-    _initialized = true;
-  }
-
-  Future<void> requestPermissions() async {
-    final androidImpl =
-        _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission();
-
-    final iosImpl = _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
-    await iosImpl?.requestPermissions(alert: true, badge: true, sound: true);
-
-    final macImpl =
-        _plugin.resolvePlatformSpecificImplementation<MacOSFlutterLocalNotificationsPlugin>();
-    await macImpl?.requestPermissions(alert: true, badge: true, sound: true);
-  }
-
-  Future<void> showBalanceNotification({
-    required double amountDiff,
-    required double total,
-  }) async {
-    const androidDetails = AndroidNotificationDetails(
-      'balance_alerts',
-      '餘額變動提醒',
-      channelDescription: '當帳戶收到代幣時發送通知',
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-    );
-
-    const iosDetails = DarwinNotificationDetails();
-
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-      macOS: iosDetails,
-    );
-
-    final title = '代幣入帳通知';
-    final body =
-        '您收到了 ${amountDiff.toStringAsFixed(2)} 個代幣！目前餘額：${total.toStringAsFixed(2)}';
-
-    await _plugin.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title,
-      body,
-      details,
-    );
-  }
-}
-
-class AppStorage {
-  static const String _lastKnownBalanceKey = 'dlinker.last_known_balance';
-  static const String _contactsKey = 'dlinker.contacts';
-
-  static Future<String> getLastKnownBalance() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_lastKnownBalanceKey) ?? '0.0';
-  }
-
-  static Future<void> setLastKnownBalance(String value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastKnownBalanceKey, value);
-  }
-
-  static Future<List<ContactModel>> getContacts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_contactsKey);
-    if (raw == null || raw.isEmpty) {
-      return <ContactModel>[];
-    }
-
-    final decoded = jsonDecode(raw);
-    if (decoded is! List<dynamic>) {
-      return <ContactModel>[];
-    }
-
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(ContactModel.fromJson)
-        .toList(growable: false);
-  }
-
-  static Future<void> saveContacts(List<ContactModel> contacts) async {
-    final prefs = await SharedPreferences.getInstance();
-    final payload = contacts.map((e) => e.toJson()).toList(growable: false);
-    await prefs.setString(_contactsKey, jsonEncode(payload));
-  }
-}
-
-class ContactRepository {
-  Future<List<ContactModel>> getAllContacts() async {
-    final list = await AppStorage.getContacts();
-    final sorted = List<ContactModel>.from(list)
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return sorted;
-  }
-
-  Future<void> addContact({required String name, required String address}) async {
-    final list = await AppStorage.getContacts();
-    final maxId = list.fold<int>(0, (prev, c) => max(prev, c.id));
-    final next = <ContactModel>[
-      ...list,
-      ContactModel(id: maxId + 1, name: name, address: address),
-    ];
-    await AppStorage.saveContacts(next);
-  }
-
-  Future<void> deleteContact(int id) async {
-    final list = await AppStorage.getContacts();
-    final next = list.where((c) => c.id != id).toList(growable: false);
-    await AppStorage.saveContacts(next);
-  }
-}
-
-class ContactModel {
-  const ContactModel({
-    required this.id,
-    required this.name,
-    required this.address,
-  });
-
-  factory ContactModel.fromJson(Map<String, dynamic> json) {
-    return ContactModel(
-      id: (json['id'] as num?)?.toInt() ?? 0,
-      name: (json['name'] ?? '').toString(),
-      address: (json['address'] ?? '').toString(),
-    );
-  }
-
-  final int id;
-  final String name;
-  final String address;
-
-  Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'id': id,
-      'name': name,
-      'address': address,
-    };
-  }
-}
-
-enum AddressInputAction {
-  confirm,
-  scan,
-  contacts,
-}
-
-class _AddressInputResult {
-  const _AddressInputResult({
-    required this.type,
+class AddressInputResult {
+  const AddressInputResult({
+    required this.action,
     required this.value,
   });
 
-  final AddressInputAction type;
+  final AddressInputAction action;
   final String value;
 }
 
-class AppStrings {
-  static const Map<String, Map<String, String>> _data = {
+class T {
+  static final Map<String, Map<String, String>> _values = {
     'en': {
-      'app_dashboard_title': 'D-Linker Dashboard',
       'token_symbol': 'ZHIXI',
       'loading': 'Loading...',
+      'app_dashboard_title': 'D-Linker Dashboard',
       'my_assets': 'My Assets',
       'balance_format': '{1} {2}',
       'device_wallet_address': 'Device Wallet Address',
@@ -2260,30 +2148,31 @@ class AppStrings {
       'transfer_success': 'Transfer successful!',
       'receive_address': 'Receive Address',
       'close': 'Close',
+      'camera_permission_required': 'Camera permission is required',
       'migration_title': 'Full Device Migration',
       'migration_desc':
-          'Since the private key is stored in a hardware security module and cannot be exported, please transfer all assets to the new device address when changing devices.',
+          'Private key cannot be exported from hardware security module. Transfer all assets to the new device address.',
       'migration_confirm': 'Confirm Transfer All Balance',
       'settings': 'Settings',
-      'language_settings': 'Language Settings',
       'lang_auto': 'System Default',
-      'lang_zh_tw': '繁體中文',
-      'lang_zh_cn': '简体中文',
+      'lang_zh_tw': 'Traditional Chinese',
+      'lang_zh_cn': 'Simplified Chinese',
       'lang_en': 'English',
       'transaction_history': 'Transaction History',
       'tx_send': 'Send',
       'tx_receive': 'Receive',
       'tx_no_history': 'No transaction history yet',
-      'auth_confirm_title': 'Auth Login Request',
-      'auth_confirm_desc': 'Web requests to link your wallet.\n\nSession ID: {1}\nAddress: {2}',
-      'auth_confirm_button': 'Confirm Authorization',
-      'auth_success_return': 'Authorization succeeded, return to web page',
-      'manual_code_entry': 'Enter Auth Code',
+      'auth_confirm_title': 'Wallet Auth Request',
+      'auth_confirm_desc':
+          'The web app requests wallet linking.\n\nSession ID: {1}\nAddress: {2}',
+      'auth_confirm_button': 'Authorize',
+      'auth_success_return': 'Authorization complete. You can return to web.',
+      'manual_code_entry': 'Manual Code',
       'manual_code_hint': 'Paste session_xxx or dlinker:login:xxx',
-      'manual_code_error': 'Invalid auth code format',
+      'manual_code_error': 'Invalid authorization code format',
       'bet_confirm_title': 'Bet Signature Request',
-      'bet_confirm_desc': 'You are placing a {1} bet.\n\nSide: {2}\nAmount: {3} {4}',
-      'bet_confirm_button': 'Confirm Bet and Sign',
+      'bet_confirm_desc': 'Game: {1}\nSide: {2}\nAmount: {3} {4}',
+      'bet_confirm_button': 'Sign & Submit Bet',
       'bet_success': 'Bet request submitted',
       'contacts': 'Contacts',
       'select_contact': 'Select Contact',
@@ -2291,12 +2180,11 @@ class AppStrings {
       'add_contact': 'Add Contact',
       'contact_name': 'Name',
       'wallet_address': 'Wallet Address',
-      'unknown_code': 'Unsupported QR/deep-link content',
     },
     'zh_TW': {
-      'app_dashboard_title': 'D-Linker 儀表板',
       'token_symbol': '子熙幣',
       'loading': '載入中...',
+      'app_dashboard_title': 'D-Linker 儀表板',
       'my_assets': '我的資產',
       'balance_format': '{1} {2}',
       'device_wallet_address': '設備錢包地址',
@@ -2320,11 +2208,11 @@ class AppStrings {
       'transfer_success': '轉帳成功！',
       'receive_address': '收款地址',
       'close': '關閉',
+      'camera_permission_required': '請授予相機權限',
       'migration_title': '全額設備轉移',
-      'migration_desc': '由於私鑰儲存於硬體安全模組中無法匯出，若要更換設備，請將所有資產轉移至新設備的地址。',
+      'migration_desc': '請將所有資產轉移至新設備地址。',
       'migration_confirm': '確認轉移全部餘額',
       'settings': '設定',
-      'language_settings': '語言設定',
       'lang_auto': '跟隨系統',
       'lang_zh_tw': '繁體中文',
       'lang_zh_cn': '簡體中文',
@@ -2341,7 +2229,7 @@ class AppStrings {
       'manual_code_hint': '貼上 session_xxx 或 dlinker:login:xxx',
       'manual_code_error': '授權碼格式錯誤',
       'bet_confirm_title': '下注簽名請求',
-      'bet_confirm_desc': '您正在進行 {1} 遊戲下注。\n\n選擇: {2}\n金額: {3} {4}',
+      'bet_confirm_desc': '遊戲: {1}\n選擇: {2}\n金額: {3} {4}',
       'bet_confirm_button': '確認下注並簽名',
       'bet_success': '下注請求已送出',
       'contacts': '通訊錄',
@@ -2350,12 +2238,11 @@ class AppStrings {
       'add_contact': '新增聯絡人',
       'contact_name': '姓名',
       'wallet_address': '錢包地址',
-      'unknown_code': '不支援的 QR/連結格式',
     },
     'zh_CN': {
-      'app_dashboard_title': 'D-Linker 仪表板',
       'token_symbol': '子熙币',
       'loading': '加载中...',
+      'app_dashboard_title': 'D-Linker 仪表板',
       'my_assets': '我的资产',
       'balance_format': '{1} {2}',
       'device_wallet_address': '设备钱包地址',
@@ -2379,13 +2266,13 @@ class AppStrings {
       'transfer_success': '转账成功！',
       'receive_address': '收款地址',
       'close': '关闭',
+      'camera_permission_required': '请授予相机权限',
       'migration_title': '全额设备转移',
-      'migration_desc': '由于私钥存储于硬件安全模块中无法导出，若要更换设备，请将所有资产转移至新设备的地址。',
+      'migration_desc': '请将所有资产转移至新设备地址。',
       'migration_confirm': '确认转移全部余额',
       'settings': '设置',
-      'language_settings': '语言设置',
       'lang_auto': '跟随系统',
-      'lang_zh_tw': '繁體中文',
+      'lang_zh_tw': '繁体中文',
       'lang_zh_cn': '简体中文',
       'lang_en': 'English',
       'transaction_history': '交易纪录',
@@ -2393,14 +2280,14 @@ class AppStrings {
       'tx_receive': '转入',
       'tx_no_history': '目前尚无交易纪录',
       'auth_confirm_title': '授权登录请求',
-      'auth_confirm_desc': '网页端请求连接您的钱包。\n\nSession ID: {1}\n地址: {2}',
+      'auth_confirm_desc': '网页端请求链接您的钱包。\n\nSession ID: {1}\n地址: {2}',
       'auth_confirm_button': '确认授权',
       'auth_success_return': '授权成功，可返回网页',
       'manual_code_entry': '输入授权码',
       'manual_code_hint': '粘贴 session_xxx 或 dlinker:login:xxx',
       'manual_code_error': '授权码格式错误',
       'bet_confirm_title': '下注签名请求',
-      'bet_confirm_desc': '您正在进行 {1} 游戏下注。\n\n选择: {2}\n金额: {3} {4}',
+      'bet_confirm_desc': '游戏: {1}\n选择: {2}\n金额: {3} {4}',
       'bet_confirm_button': '确认下注并签名',
       'bet_success': '下注请求已发送',
       'contacts': '通讯录',
@@ -2409,25 +2296,23 @@ class AppStrings {
       'add_contact': '新增联系人',
       'contact_name': '姓名',
       'wallet_address': '钱包地址',
-      'unknown_code': '不支持的 QR/链接格式',
     },
   };
 
-  static String tr(BuildContext context, String key, [List<String> args = const []]) {
+  static String of(BuildContext context, String key, [List<String> args = const []]) {
     final locale = Localizations.localeOf(context);
-    final langKey = _localeToKey(locale);
-    final table = _data[langKey] ?? _data['en']!;
-    var value = table[key] ?? _data['en']![key] ?? key;
+    final localeCode = _localeCode(locale);
+    final template = _values[localeCode]?[key] ?? _values['en']?[key] ?? key;
 
+    var result = template;
     for (var i = 0; i < args.length; i++) {
-      value = value.replaceAll('{${i + 1}}', args[i]);
+      result = result.replaceAll('{${i + 1}}', args[i]);
     }
-
-    return value;
+    return result;
   }
 
-  static String _localeToKey(Locale locale) {
-    if (locale.languageCode.toLowerCase() == 'zh') {
+  static String _localeCode(Locale locale) {
+    if (locale.languageCode == 'zh') {
       final country = (locale.countryCode ?? '').toUpperCase();
       final script = (locale.scriptCode ?? '').toLowerCase();
       if (country == 'CN' || script == 'hans') {
@@ -2437,8 +2322,4 @@ class AppStrings {
     }
     return 'en';
   }
-}
-
-extension _FirstOrNullExt<E> on List<E> {
-  E? get firstOrNull => isEmpty ? null : first;
 }

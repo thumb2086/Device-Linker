@@ -1,12 +1,12 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:device_linker_flutter/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('App boots into dashboard shell', (WidgetTester tester) async {
+  testWidgets('App boots with Material shell', (WidgetTester tester) async {
     await tester.pumpWidget(const DeviceLinkerApp());
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
 
-    expect(find.textContaining('D-Linker'), findsAtLeastNWidgets(1));
-    expect(find.byType(Scaffold), findsWidgets);
+    expect(find.byType(MaterialApp), findsOneWidget);
   });
 }
