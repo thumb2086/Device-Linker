@@ -1,0 +1,103 @@
+name: Build Flutter Multi-Platform
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/flutter-multiplatform-build.yml'
+  pull_request:
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/flutter-multiplatform-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+            flutter_platforms: android
+            build_command: flutter build apk --release
+            artifact_path: flutter_app/build/app/outputs/flutter-apk/*.apk
+          - platform: ios
+            os: macos-latest
+            flutter_platforms: ios
+            build_command: flutter build ios --release --no-codesign
+            artifact_path: flutter_app/build/ios/iphoneos/Runner.app
+          - platform: web
+            os: ubuntu-latest
+            flutter_platforms: web
+            build_command: flutter build web --release
+            artifact_path: flutter_app/build/web/**
+          - platform: linux
+            os: ubuntu-latest
+            flutter_platforms: linux
+            build_command: flutter build linux --release
+            artifact_path: flutter_app/build/linux/x64/release/bundle/**
+          - platform: windows
+            os: windows-latest
+            flutter_platforms: windows
+            build_command: flutter build windows --release
+            artifact_path: flutter_app/build/windows/x64/runner/Release/**
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java (for Android build)
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Initialize Flutter project for target platform
+        working-directory: flutter_app
+        run: |
+          flutter create . \
+            --project-name device_linker_flutter \
+            --org com.devicelinker \
+            --platforms=${{ matrix.flutter_platforms }}
+
+      - name: Get dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: flutter_app
+        run: flutter test
+
+      - name: Build ${{ matrix.platform }}
+        working-directory: flutter_app
+        run: ${{ matrix.build_command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-${{ matrix.platform }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
