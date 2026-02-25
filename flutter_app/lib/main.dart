@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
@@ -589,14 +588,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _languageTile(AppLanguage language, String label) {
-    return RadioListTile<AppLanguage>(
+    final isSelected = widget.language == language;
+    return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(label),
-      value: language,
-      groupValue: widget.language,
-      onChanged: (value) async {
-        if (value == null) return;
-        await widget.onLanguageChanged(value);
+      leading: Icon(
+        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+      ),
+      onTap: () async {
+        if (isSelected) {
+          Navigator.of(context).pop();
+          return;
+        }
+        await widget.onLanguageChanged(language);
         if (mounted) {
           Navigator.of(context).pop();
         }
