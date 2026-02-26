@@ -150,7 +150,7 @@ jobs:
                 printf 'android {\n'
                 printf '    signingConfigs {\n'
                 printf '        maybeCreate("release").apply {\n'
-                printf '            storeFile = ciKeystoreProperties["storeFile"]?.let { file(it) }\n'
+                printf '            storeFile = ciKeystoreProperties["storeFile"]?.let { rootProject.file(it) }\n'
                 printf '            storePassword = ciKeystoreProperties["storePassword"]\n'
                 printf '            keyAlias = ciKeystoreProperties["keyAlias"]\n'
                 printf '            keyPassword = ciKeystoreProperties["keyPassword"]\n'
@@ -176,7 +176,7 @@ jobs:
                 printf 'android {\n'
                 printf '    signingConfigs {\n'
                 printf '        def releaseConfig = maybeCreate("release")\n'
-                printf "        releaseConfig.storeFile = file(ciKeystoreProperties['storeFile'])\n"
+                printf "        releaseConfig.storeFile = rootProject.file(ciKeystoreProperties['storeFile'])\n"
                 printf "        releaseConfig.storePassword = ciKeystoreProperties['storePassword']\n"
                 printf "        releaseConfig.keyAlias = ciKeystoreProperties['keyAlias']\n"
                 printf "        releaseConfig.keyPassword = ciKeystoreProperties['keyPassword']\n"
