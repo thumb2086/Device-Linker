@@ -249,33 +249,72 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _syncBalance({bool notifyIfIncreased = true}) async {
-    if (_walletAddress.isEmpty || _isSyncingBalance) return;
+  Future<String?> _syncBalance({
+    bool notifyIfIncreased = true,
+    bool throwOnError = false,
+  }) async {
+    if (_walletAddress.isEmpty || _isSyncingBalance) return null;
     _isSyncingBalance = true;
 
     try {
       final nextBalance = await _api.syncBalance(_walletAddress);
       final next = double.tryParse(nextBalance) ?? 0.0;
-
-      if (notifyIfIncreased && next > _lastKnownBalance) {
-        await NotificationService.instance.showBalanceNotification(
-          amount: next - _lastKnownBalance,
-          total: next,
-        );
-      }
-
-      _lastKnownBalance = next;
-      await AppStorage.setLastKnownBalance(nextBalance);
+      final delta = next - _lastKnownBalance;
 
       if (!mounted) return;
       setState(() {
         _balance = nextBalance;
       });
+      _lastKnownBalance = next;
+      await AppStorage.setLastKnownBalance(nextBalance);
+
+      if (notifyIfIncreased && delta > 0) {
+        try {
+          await NotificationService.instance.showBalanceNotification(
+            amount: delta,
+            total: next,
+          );
+        } catch (e) {
+          debugPrint('Balance notification failed: $e');
+        }
+      }
+
+      return nextBalance;
     } catch (e) {
       debugPrint('Balance sync failed: $e');
+      if (throwOnError) rethrow;
+      return null;
     } finally {
       _isSyncingBalance = false;
     }
+  }
+
+  Future<void> _refreshBalanceManually() async {
+    if (_walletAddress.isEmpty) return;
+
+    if (_isSyncingBalance) {
+      _showSnack(T.of(context, 'balance_sync_in_progress'));
+      return;
+    }
+
+    await _runWithLoading(() async {
+      final previous = _balance;
+      try {
+        final latest = await _syncBalance(
+          notifyIfIncreased: false,
+          throwOnError: true,
+        );
+        if (!mounted || latest == null) return;
+        if (latest == previous) {
+          _showSnack(T.of(context, 'balance_no_change'));
+        } else {
+          _showSnack(T.of(context, 'balance_updated', [latest]));
+        }
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack(T.of(context, 'balance_update_failed', [e.toString()]));
+      }
+    });
   }
 
   Future<void> _requestAirdrop() async {
@@ -845,11 +884,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(T.of(context, 'app_dashboard_title')),
         actions: [
           IconButton(
-            onPressed: () {
-              _runWithLoading(() async {
-                await _syncBalance();
-              });
-            },
+            onPressed: _refreshBalanceManually,
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
@@ -2352,6 +2387,10 @@ class T {
       'request_test_coins': 'Get 100 {1} Test Coins',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'balance_sync_in_progress': 'Balance sync in progress, please wait',
+      'balance_no_change': 'Balance is already up to date',
+      'balance_updated': 'Balance updated: {1}',
+      'balance_update_failed': 'Balance update failed: {1}',
       'manual_address_input': 'Enter Address Manually',
       'address_placeholder': '0x...',
       'cancel': 'Cancel',
@@ -2412,6 +2451,10 @@ class T {
       'request_test_coins': '領取 100 {1} 測試幣',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'balance_sync_in_progress': '餘額同步中，請稍候',
+      'balance_no_change': '餘額已是最新',
+      'balance_updated': '餘額已更新: {1}',
+      'balance_update_failed': '更新餘額失敗: {1}',
       'manual_address_input': '手動輸入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',
@@ -2470,6 +2513,10 @@ class T {
       'request_test_coins': '领取 100 {1} 测试币',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'balance_sync_in_progress': '余额同步中，请稍候',
+      'balance_no_change': '余额已是最新',
+      'balance_updated': '余额已更新: {1}',
+      'balance_update_failed': '更新余额失败: {1}',
       'manual_address_input': '手动输入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',
