@@ -345,7 +345,7 @@ jobs:
           Name: "english"; MessagesFile: "compiler:Default.isl"
 
           [Files]
-          Source: "flutter_app\\build\\windows\\x64\\runner\\Release\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          Source: "..\\windows\\x64\\runner\\Release\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Icons]
           Name: "{group}\\Device Linker"; Filename: "{app}\\device_linker_flutter.exe"
