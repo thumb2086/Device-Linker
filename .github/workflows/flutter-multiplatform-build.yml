@@ -72,11 +72,45 @@ jobs:
         working-directory: flutter_app
         run: |
           if [ -f android/app/build.gradle.kts ]; then
-            sed -i '/compileOptions {/a\        isCoreLibraryDesugaringEnabled = true' android/app/build.gradle.kts
-            sed -i '/dependencies {/a\    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")' android/app/build.gradle.kts
+            if ! grep -q "isCoreLibraryDesugaringEnabled = true" android/app/build.gradle.kts; then
+              cat <<'EOF' >> android/app/build.gradle.kts
+
+android {
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+    }
+}
+EOF
+            fi
+
+            if ! grep -q "coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:" android/app/build.gradle.kts; then
+              cat <<'EOF' >> android/app/build.gradle.kts
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+}
+EOF
+            fi
           elif [ -f android/app/build.gradle ]; then
-            sed -i '/compileOptions {/a\        coreLibraryDesugaringEnabled true' android/app/build.gradle
-            sed -i '/dependencies {/a\    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"' android/app/build.gradle
+            if ! grep -q "coreLibraryDesugaringEnabled true" android/app/build.gradle; then
+              cat <<'EOF' >> android/app/build.gradle
+
+android {
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+    }
+}
+EOF
+            fi
+
+            if ! grep -q "coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:" android/app/build.gradle; then
+              cat <<'EOF' >> android/app/build.gradle
+
+dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+}
+EOF
+            fi
           else
             echo "Android app build file not found"
             exit 1
