@@ -67,6 +67,21 @@ jobs:
         working-directory: flutter_app
         run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
+      - name: Enable Android desugaring for flutter_local_notifications
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i '/compileOptions {/a\        isCoreLibraryDesugaringEnabled = true' android/app/build.gradle.kts
+            sed -i '/dependencies {/a\    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")' android/app/build.gradle.kts
+          elif [ -f android/app/build.gradle ]; then
+            sed -i '/compileOptions {/a\        coreLibraryDesugaringEnabled true' android/app/build.gradle
+            sed -i '/dependencies {/a\    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"' android/app/build.gradle
+          else
+            echo "Android app build file not found"
+            exit 1
+          fi
+
       - name: Get dependencies
         working-directory: flutter_app
         run: flutter pub get
