@@ -3,7 +3,7 @@ name: Release Flutter Multi-Platform
 on:
   push:
     branches:
-      - main
+      - '**'
     tags:
       - '*'
   workflow_dispatch:
