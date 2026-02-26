@@ -67,6 +67,27 @@ jobs:
         working-directory: flutter_app
         run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
+      - name: Configure deep link schemes
+        if: matrix.platform == 'android' || matrix.platform == 'ios'
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ matrix.platform }}" = "android" ]; then
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if [ -f "$MANIFEST" ] && ! grep -q 'android:scheme="dlinker"' "$MANIFEST"; then
+              perl -0777 -i -pe 's#\s*</activity>#\n            <!-- Supports dlinker://login/<sessionId> -->\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" android:host="login" />\n            </intent-filter>\n\n            <!-- Supports dlinker:login:<sessionId> -->\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+            fi
+          fi
+
+          if [ "${{ matrix.platform }}" = "ios" ]; then
+            PLIST="ios/Runner/Info.plist"
+            if [ -f "$PLIST" ] && ! grep -q '<string>dlinker</string>' "$PLIST"; then
+              perl -0777 -i -pe 's#</dict>\n</plist>#  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleURLName</key>\n      <string>device-linker</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>dlinker</string>\n      </array>\n    </dict>\n  </array>\n</dict>\n</plist>#s' "$PLIST"
+            fi
+          fi
+
       - name: Patch Android Gradle Kotlin DSL compatibility
         if: matrix.platform == 'android'
         working-directory: flutter_app
