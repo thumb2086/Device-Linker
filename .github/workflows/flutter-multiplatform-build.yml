@@ -271,7 +271,8 @@ jobs:
         shell: bash
         run: mkdir -p flutter_app/build/release
 
-      - name: Package Android/Web/iOS/Linux/Windows/macOS zip artifacts
+      - name: Package Android/Web/iOS/Linux/macOS artifacts
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -297,11 +298,6 @@ jobs:
               cd flutter_app/build/linux/x64/release/bundle
               zip -r ../../../../release/flutter-linux.zip .
               ;;
-            windows)
-              [ -d flutter_app/build/windows/x64/runner/Release ] || { echo "Windows release folder not found"; exit 1; }
-              cd flutter_app/build/windows/x64/runner/Release
-              zip -r ../../../../release/flutter-windows.zip .
-              ;;
             macos)
               app_path="$(find flutter_app/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
               [ -n "${app_path}" ] || { echo "macOS .app not found"; exit 1; }
@@ -312,6 +308,14 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Package Windows zip artifact
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $releaseDir = "flutter_app\build\windows\x64\runner\Release"
+          if (-not (Test-Path $releaseDir)) { throw "Windows release folder not found" }
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "flutter_app\build\release\flutter-windows.zip" -Force
 
       - name: Build Windows installer (.exe)
         if: matrix.platform == 'windows'
