@@ -50,8 +50,8 @@ extension AppLanguageTag on AppLanguage {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.initialize();
   runApp(const DeviceLinkerApp());
+  unawaited(NotificationService.instance.initialize());
 }
 
 class DeviceLinkerApp extends StatefulWidget {
@@ -2200,19 +2200,34 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const darwin = DarwinInitializationSettings();
-    const settings = InitializationSettings(
-      android: android,
-      iOS: darwin,
-      macOS: darwin,
-    );
+    try {
+      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const darwin = DarwinInitializationSettings();
+      const settings = InitializationSettings(
+        android: android,
+        iOS: darwin,
+        macOS: darwin,
+      );
 
-    await _plugin.initialize(settings);
-    _initialized = true;
+      await _plugin.initialize(settings);
+      _initialized = true;
+    } catch (e) {
+      debugPrint('Notification initialize skipped: $e');
+    }
   }
 
   Future<void> requestPermissions() async {
+    if (kIsWeb) return;
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        break;
+      default:
+        return;
+    }
+
     await initialize();
 
     await _plugin
