@@ -38,7 +38,7 @@ jobs:
             os: windows-latest
             flutter_platforms: windows
             build_command: flutter build windows --release
-            package_glob: flutter_app/build/release/flutter-windows.*
+            package_glob: flutter_app/build/release/flutter-windows*
           - platform: macos
             os: macos-latest
             flutter_platforms: macos
