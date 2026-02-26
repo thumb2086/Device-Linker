@@ -18,27 +18,32 @@ jobs:
             os: ubuntu-latest
             flutter_platforms: android
             build_command: flutter build apk --release
-            package_path: flutter_app/build/release/flutter-android.apk
+            package_glob: flutter_app/build/release/flutter-android.apk
           - platform: ios
             os: macos-latest
             flutter_platforms: ios
             build_command: flutter build ios --release --no-codesign
-            package_path: flutter_app/build/release/flutter-ios.zip
+            package_glob: flutter_app/build/release/flutter-ios.zip
           - platform: web
             os: ubuntu-latest
             flutter_platforms: web
             build_command: flutter build web --release
-            package_path: flutter_app/build/release/flutter-web.zip
+            package_glob: flutter_app/build/release/flutter-web.zip
           - platform: linux
             os: ubuntu-latest
             flutter_platforms: linux
             build_command: flutter build linux --release
-            package_path: flutter_app/build/release/flutter-linux.zip
+            package_glob: flutter_app/build/release/flutter-linux.*
           - platform: windows
             os: windows-latest
             flutter_platforms: windows
             build_command: flutter build windows --release
-            package_path: flutter_app/build/release/flutter-windows.zip
+            package_glob: flutter_app/build/release/flutter-windows.*
+          - platform: macos
+            os: macos-latest
+            flutter_platforms: macos
+            build_command: flutter build macos --release
+            package_glob: flutter_app/build/release/flutter-macos.*
 
     steps:
       - name: Checkout code
@@ -262,43 +267,151 @@ jobs:
         working-directory: flutter_app
         run: ${{ matrix.build_command }}
 
-      - name: Package artifact
+      - name: Prepare release directory
+        shell: bash
+        run: mkdir -p flutter_app/build/release
+
+      - name: Package Android/Web/iOS/Linux/Windows/macOS zip artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.platform }}" in
+            android)
+              apk="$(find flutter_app/build/app/outputs/flutter-apk -name '*.apk' | head -n 1)"
+              [ -n "${apk}" ] || { echo "Android APK not found"; exit 1; }
+              cp "${apk}" flutter_app/build/release/flutter-android.apk
+              ;;
+            ios)
+              [ -d flutter_app/build/ios/iphoneos/Runner.app ] || { echo "iOS Runner.app not found"; exit 1; }
+              cd flutter_app/build/ios/iphoneos
+              zip -r ../../release/flutter-ios.zip Runner.app
+              ;;
+            web)
+              [ -d flutter_app/build/web ] || { echo "Web build folder not found"; exit 1; }
+              cd flutter_app/build/web
+              zip -r ../release/flutter-web.zip .
+              ;;
+            linux)
+              [ -d flutter_app/build/linux/x64/release/bundle ] || { echo "Linux bundle not found"; exit 1; }
+              cd flutter_app/build/linux/x64/release/bundle
+              zip -r ../../../../release/flutter-linux.zip .
+              ;;
+            windows)
+              [ -d flutter_app/build/windows/x64/runner/Release ] || { echo "Windows release folder not found"; exit 1; }
+              cd flutter_app/build/windows/x64/runner/Release
+              zip -r ../../../../release/flutter-windows.zip .
+              ;;
+            macos)
+              app_path="$(find flutter_app/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
+              [ -n "${app_path}" ] || { echo "macOS .app not found"; exit 1; }
+              ditto -c -k --sequesterRsrc --keepParent "${app_path}" flutter_app/build/release/flutter-macos.zip
+              ;;
+            *)
+              echo "Unsupported platform: ${{ matrix.platform }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Build Windows installer (.exe)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "flutter_app/build/release" | Out-Null
+          choco install innosetup -y --no-progress
 
-          switch ("${{ matrix.platform }}") {
-            "android" {
-              $apk = Get-ChildItem -Path "flutter_app/build/app/outputs/flutter-apk" -Filter "*.apk" | Select-Object -First 1
-              if (-not $apk) { throw "Android APK not found" }
-              Copy-Item $apk.FullName "flutter_app/build/release/flutter-android.apk" -Force
-            }
-            "ios" {
-              if (-not (Test-Path "flutter_app/build/ios/iphoneos/Runner.app")) { throw "iOS Runner.app not found" }
-              Compress-Archive -Path "flutter_app/build/ios/iphoneos/Runner.app" -DestinationPath "flutter_app/build/release/flutter-ios.zip" -Force
-            }
-            "web" {
-              if (-not (Test-Path "flutter_app/build/web")) { throw "Web build folder not found" }
-              Compress-Archive -Path "flutter_app/build/web/*" -DestinationPath "flutter_app/build/release/flutter-web.zip" -Force
-            }
-            "linux" {
-              if (-not (Test-Path "flutter_app/build/linux/x64/release/bundle")) { throw "Linux bundle not found" }
-              Compress-Archive -Path "flutter_app/build/linux/x64/release/bundle/*" -DestinationPath "flutter_app/build/release/flutter-linux.zip" -Force
-            }
-            "windows" {
-              if (-not (Test-Path "flutter_app/build/windows/x64/runner/Release")) { throw "Windows release folder not found" }
-              Compress-Archive -Path "flutter_app/build/windows/x64/runner/Release/*" -DestinationPath "flutter_app/build/release/flutter-windows.zip" -Force
-            }
-            default {
-              throw "Unsupported platform: ${{ matrix.platform }}"
-            }
-          }
+          $issPath = "flutter_app\\build\\release\\installer.iss"
+          $version = "${{ github.ref_name }}"
+          if ($version.StartsWith('v')) { $version = $version.Substring(1) }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.0.0" }
+
+          @"
+          [Setup]
+          AppId={{C5B6A4E0-3B28-4A15-BB5B-9F2A0C5D8C11}
+          AppName=Device Linker
+          AppVersion=$version
+          DefaultDirName={autopf}\\Device Linker
+          DefaultGroupName=Device Linker
+          OutputDir=flutter_app\\build\\release
+          OutputBaseFilename=flutter-windows-installer
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+
+          [Languages]
+          Name: ""english""; MessagesFile: ""compiler:Default.isl""
+
+          [Files]
+          Source: ""flutter_app\\build\\windows\\x64\\runner\\Release\\*""; DestDir: ""{app}""; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: ""{group}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""
+          Name: ""{autodesktop}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""; Tasks: desktopicon
+
+          [Tasks]
+          Name: ""desktopicon""; Description: ""Create a desktop icon""; GroupDescription: ""Additional icons:""; Flags: unchecked
+
+          [Run]
+          Filename: ""{app}\\device_linker_flutter.exe""; Description: ""Launch Device Linker""; Flags: nowait postinstall skipifsilent
+          "@ | Set-Content -Path $issPath -Encoding ASCII
+
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" $issPath
+
+      - name: Build Linux installer (.deb)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(grep '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          APP_ROOT="flutter_app/build/release/deb-root"
+
+          rm -rf "${APP_ROOT}"
+          mkdir -p "${APP_ROOT}/DEBIAN"
+          mkdir -p "${APP_ROOT}/usr/lib/device-linker"
+          mkdir -p "${APP_ROOT}/usr/bin"
+          mkdir -p "${APP_ROOT}/usr/share/applications"
+
+          cp -a flutter_app/build/linux/x64/release/bundle/. "${APP_ROOT}/usr/lib/device-linker/"
+          ln -s /usr/lib/device-linker/device_linker_flutter "${APP_ROOT}/usr/bin/device-linker"
+
+          {
+            printf 'Package: device-linker\n'
+            printf 'Version: %s\n' "${VERSION}"
+            printf 'Section: utils\n'
+            printf 'Priority: optional\n'
+            printf 'Architecture: amd64\n'
+            printf 'Maintainer: Device Linker Team\n'
+            printf 'Depends: libgtk-3-0\n'
+            printf 'Description: Device Linker desktop application\n'
+          } > "${APP_ROOT}/DEBIAN/control"
+
+          {
+            printf '[Desktop Entry]\n'
+            printf 'Name=Device Linker\n'
+            printf 'Comment=Device Linker desktop application\n'
+            printf 'Exec=/usr/bin/device-linker\n'
+            printf 'Terminal=false\n'
+            printf 'Type=Application\n'
+            printf 'Categories=Utility;\n'
+          } > "${APP_ROOT}/usr/share/applications/device-linker.desktop"
+
+          dpkg-deb --build "${APP_ROOT}" flutter_app/build/release/flutter-linux.deb
+
+      - name: Build macOS installer (.dmg)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_path="$(find flutter_app/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
+          [ -n "${app_path}" ] || { echo "macOS .app not found"; exit 1; }
+          hdiutil create -volname "Device Linker" -srcfolder "${app_path}" -ov -format UDZO flutter_app/build/release/flutter-macos.dmg
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: flutter-${{ matrix.platform }}
-          path: ${{ matrix.package_path }}
+          path: ${{ matrix.package_glob }}
           if-no-files-found: error
 
   release:
