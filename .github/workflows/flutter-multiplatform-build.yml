@@ -1,0 +1,442 @@
+name: Release Flutter Multi-Platform
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+            flutter_platforms: android
+            build_command: flutter build apk --release
+            package_glob: flutter_app/build/release/flutter-android.apk
+          - platform: ios
+            os: macos-latest
+            flutter_platforms: ios
+            build_command: flutter build ios --release --no-codesign
+            package_glob: flutter_app/build/release/flutter-ios.zip
+          - platform: web
+            os: ubuntu-latest
+            flutter_platforms: web
+            build_command: flutter build web --release
+            package_glob: flutter_app/build/release/flutter-web.zip
+          - platform: linux
+            os: ubuntu-latest
+            flutter_platforms: linux
+            build_command: flutter build linux --release
+            package_glob: flutter_app/build/release/flutter-linux.*
+          - platform: windows
+            os: windows-latest
+            flutter_platforms: windows
+            build_command: flutter build windows --release
+            package_glob: flutter_app/build/release/flutter-windows.*
+          - platform: macos
+            os: macos-latest
+            flutter_platforms: macos
+            build_command: flutter build macos --release
+            package_glob: flutter_app/build/release/flutter-macos.*
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java (for Android build)
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev
+
+      - name: Initialize Flutter project for target platform
+        working-directory: flutter_app
+        run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
+
+      - name: Configure deep link schemes
+        if: matrix.platform == 'android' || matrix.platform == 'ios'
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ matrix.platform }}" = "android" ]; then
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if [ -f "$MANIFEST" ]; then
+              if ! grep -q 'android:scheme="dlinker"[[:space:]]\+android:host="login"' "$MANIFEST"; then
+                perl -0777 -i -pe 's#\s*</activity>#\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" android:host="login" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+              fi
+
+              if ! grep -q '<data android:scheme="dlinker" />' "$MANIFEST"; then
+                perl -0777 -i -pe 's#\s*</activity>#\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+              fi
+            fi
+          fi
+
+          if [ "${{ matrix.platform }}" = "ios" ]; then
+            PLIST="ios/Runner/Info.plist"
+            if [ -f "$PLIST" ] && ! grep -q '<string>dlinker</string>' "$PLIST"; then
+              perl -0777 -i -pe 's#</dict>\n</plist>#  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleURLName</key>\n      <string>device-linker</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>dlinker</string>\n      </array>\n    </dict>\n  </array>\n</dict>\n</plist>#s' "$PLIST"
+            fi
+          fi
+
+      - name: Patch Android Gradle Kotlin DSL compatibility
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+
+          if [ -f android/app/build.gradle.kts ]; then
+            # Kotlin 2.x deprecates kotlinOptions.jvmTarget in Gradle scripts.
+            perl -0pi -e 's/\n\s*kotlinOptions\s*\{\s*\n\s*jvmTarget\s*=\s*JavaVersion\.VERSION_[0-9]+\.toString\(\)\s*\n\s*\}\n/\n/sg' android/app/build.gradle.kts
+
+            if ! grep -q 'compilerOptions {' android/app/build.gradle.kts; then
+              {
+                printf '\n'
+                printf 'kotlin {\n'
+                printf '    compilerOptions {\n'
+                printf '        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle.kts
+            fi
+          fi
+
+      - name: Configure Android release signing
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          resolve_secret() {
+            local primary="$1"
+            local fallback="$2"
+            if [ -n "${primary}" ]; then
+              printf '%s' "${primary}"
+            else
+              printf '%s' "${fallback}"
+            fi
+          }
+
+          KS_B64="$(resolve_secret "${KEYSTORE_BASE64}" "${ANDROID_KEYSTORE_BASE64}")"
+          KS_PASS="$(resolve_secret "${KEYSTORE_PASSWORD}" "${ANDROID_KEYSTORE_PASSWORD}")"
+          KS_ALIAS="$(resolve_secret "${KEY_ALIAS}" "${ANDROID_KEY_ALIAS}")"
+          KEY_PASS="$(resolve_secret "${KEY_PASSWORD}" "${ANDROID_KEY_PASSWORD}")"
+
+          if [ -z "${KS_B64}" ] || [ -z "${KS_PASS}" ] || [ -z "${KS_ALIAS}" ] || [ -z "${KEY_PASS}" ]; then
+            echo "::error::Missing Android signing secrets. Set KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD (or ANDROID_* equivalents)."
+            exit 1
+          fi
+
+          printf '%s' "${KS_B64}" | base64 --decode > android/app/release.jks
+
+          {
+            printf 'storePassword=%s\n' "${KS_PASS}"
+            printf 'keyPassword=%s\n' "${KEY_PASS}"
+            printf 'keyAlias=%s\n' "${KS_ALIAS}"
+            printf 'storeFile=%s\n' 'app/release.jks'
+          } > android/key.properties
+
+          if [ -f android/app/build.gradle.kts ]; then
+            if ! grep -q "CI_ANDROID_RELEASE_SIGNING" android/app/build.gradle.kts; then
+              {
+                printf '\n// CI_ANDROID_RELEASE_SIGNING\n'
+                printf 'val ciKeystoreProperties = mutableMapOf<String, String>()\n'
+                printf 'rootProject.file("key.properties").takeIf { it.exists() }?.readLines()?.forEach { line ->\n'
+                printf '    val trimmed = line.trim()\n'
+                printf '    if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {\n'
+                printf '        val idx = trimmed.indexOf("=")\n'
+                printf '        if (idx > 0) {\n'
+                printf '            ciKeystoreProperties[trimmed.substring(0, idx).trim()] = trimmed.substring(idx + 1).trim()\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '}\n\n'
+                printf 'android {\n'
+                printf '    signingConfigs {\n'
+                printf '        maybeCreate("release").apply {\n'
+                printf '            storeFile = ciKeystoreProperties["storeFile"]?.let { rootProject.file(it) }\n'
+                printf '            storePassword = ciKeystoreProperties["storePassword"]\n'
+                printf '            keyAlias = ciKeystoreProperties["keyAlias"]\n'
+                printf '            keyPassword = ciKeystoreProperties["keyPassword"]\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '    buildTypes {\n'
+                printf '        getByName("release") {\n'
+                printf '            signingConfig = signingConfigs.getByName("release")\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle.kts
+            fi
+          elif [ -f android/app/build.gradle ]; then
+            if ! grep -q "CI_ANDROID_RELEASE_SIGNING" android/app/build.gradle; then
+              {
+                printf '\n// CI_ANDROID_RELEASE_SIGNING\n'
+                printf 'def ciKeystoreProperties = new java.util.Properties()\n'
+                printf "def ciKeystorePropertiesFile = rootProject.file('key.properties')\n"
+                printf 'if (ciKeystorePropertiesFile.exists()) {\n'
+                printf '    ciKeystoreProperties.load(new java.io.FileInputStream(ciKeystorePropertiesFile))\n'
+                printf '}\n\n'
+                printf 'android {\n'
+                printf '    signingConfigs {\n'
+                printf '        def releaseConfig = maybeCreate("release")\n'
+                printf "        releaseConfig.storeFile = rootProject.file(ciKeystoreProperties['storeFile'])\n"
+                printf "        releaseConfig.storePassword = ciKeystoreProperties['storePassword']\n"
+                printf "        releaseConfig.keyAlias = ciKeystoreProperties['keyAlias']\n"
+                printf "        releaseConfig.keyPassword = ciKeystoreProperties['keyPassword']\n"
+                printf '    }\n'
+                printf '    buildTypes {\n'
+                printf '        release {\n'
+                printf '            signingConfig signingConfigs.release\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle
+            fi
+          else
+            echo "::error::Android app build file not found"
+            exit 1
+          fi
+
+      - name: Enable Android desugaring for flutter_local_notifications
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            if ! grep -q "isCoreLibraryDesugaringEnabled = true" android/app/build.gradle.kts; then
+              printf '\nandroid {\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n    }\n}\n' >> android/app/build.gradle.kts
+            fi
+
+            if ! grep -q "coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:" android/app/build.gradle.kts; then
+              printf '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")\n}\n' >> android/app/build.gradle.kts
+            fi
+          elif [ -f android/app/build.gradle ]; then
+            if ! grep -q "coreLibraryDesugaringEnabled true" android/app/build.gradle; then
+              printf '\nandroid {\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n    }\n}\n' >> android/app/build.gradle
+            fi
+
+            if ! grep -q "coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:" android/app/build.gradle; then
+              printf '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"\n}\n' >> android/app/build.gradle
+            fi
+          else
+            echo "Android app build file not found"
+            exit 1
+          fi
+
+      - name: Get dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: flutter_app
+        run: flutter test
+
+      - name: Build ${{ matrix.platform }}
+        working-directory: flutter_app
+        run: ${{ matrix.build_command }}
+
+      - name: Prepare release directory
+        shell: bash
+        run: mkdir -p flutter_app/build/release
+
+      - name: Package Android/Web/iOS/Linux/macOS artifacts
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.platform }}" in
+            android)
+              apk="$(find flutter_app/build/app/outputs/flutter-apk -name '*.apk' | head -n 1)"
+              [ -n "${apk}" ] || { echo "Android APK not found"; exit 1; }
+              cp "${apk}" flutter_app/build/release/flutter-android.apk
+              ;;
+            ios)
+              [ -d flutter_app/build/ios/iphoneos/Runner.app ] || { echo "iOS Runner.app not found"; exit 1; }
+              cd flutter_app/build/ios/iphoneos
+              zip -r ../../release/flutter-ios.zip Runner.app
+              ;;
+            web)
+              [ -d flutter_app/build/web ] || { echo "Web build folder not found"; exit 1; }
+              cd flutter_app/build/web
+              zip -r ../release/flutter-web.zip .
+              ;;
+            linux)
+              [ -d flutter_app/build/linux/x64/release/bundle ] || { echo "Linux bundle not found"; exit 1; }
+              cd flutter_app/build/linux/x64/release/bundle
+              zip -r ../../../../release/flutter-linux.zip .
+              ;;
+            macos)
+              app_path="$(find flutter_app/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
+              [ -n "${app_path}" ] || { echo "macOS .app not found"; exit 1; }
+              ditto -c -k --sequesterRsrc --keepParent "${app_path}" flutter_app/build/release/flutter-macos.zip
+              ;;
+            *)
+              echo "Unsupported platform: ${{ matrix.platform }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Package Windows zip artifact
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $releaseDir = "flutter_app\build\windows\x64\runner\Release"
+          if (-not (Test-Path $releaseDir)) { throw "Windows release folder not found" }
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "flutter_app\build\release\flutter-windows.zip" -Force
+
+      - name: Build Windows installer (.exe)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+          $issPath = "flutter_app\\build\\release\\installer.iss"
+          $version = "${{ github.ref_name }}"
+          if ($version.StartsWith('v')) { $version = $version.Substring(1) }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.0.0" }
+
+          @"
+          [Setup]
+          AppId={{C5B6A4E0-3B28-4A15-BB5B-9F2A0C5D8C11}
+          AppName=Device Linker
+          AppVersion=$version
+          DefaultDirName={autopf}\\Device Linker
+          DefaultGroupName=Device Linker
+          OutputDir=flutter_app\\build\\release
+          OutputBaseFilename=flutter-windows-installer
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+
+          [Languages]
+          Name: ""english""; MessagesFile: ""compiler:Default.isl""
+
+          [Files]
+          Source: ""flutter_app\\build\\windows\\x64\\runner\\Release\\*""; DestDir: ""{app}""; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: ""{group}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""
+          Name: ""{autodesktop}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""; Tasks: desktopicon
+
+          [Tasks]
+          Name: ""desktopicon""; Description: ""Create a desktop icon""; GroupDescription: ""Additional icons:""; Flags: unchecked
+
+          [Run]
+          Filename: ""{app}\\device_linker_flutter.exe""; Description: ""Launch Device Linker""; Flags: nowait postinstall skipifsilent
+          "@ | Set-Content -Path $issPath -Encoding ASCII
+
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" $issPath
+
+      - name: Build Linux installer (.deb)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(grep '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          APP_ROOT="flutter_app/build/release/deb-root"
+
+          rm -rf "${APP_ROOT}"
+          mkdir -p "${APP_ROOT}/DEBIAN"
+          mkdir -p "${APP_ROOT}/usr/lib/device-linker"
+          mkdir -p "${APP_ROOT}/usr/bin"
+          mkdir -p "${APP_ROOT}/usr/share/applications"
+
+          cp -a flutter_app/build/linux/x64/release/bundle/. "${APP_ROOT}/usr/lib/device-linker/"
+          ln -s /usr/lib/device-linker/device_linker_flutter "${APP_ROOT}/usr/bin/device-linker"
+
+          {
+            printf 'Package: device-linker\n'
+            printf 'Version: %s\n' "${VERSION}"
+            printf 'Section: utils\n'
+            printf 'Priority: optional\n'
+            printf 'Architecture: amd64\n'
+            printf 'Maintainer: Device Linker Team\n'
+            printf 'Depends: libgtk-3-0\n'
+            printf 'Description: Device Linker desktop application\n'
+          } > "${APP_ROOT}/DEBIAN/control"
+
+          {
+            printf '[Desktop Entry]\n'
+            printf 'Name=Device Linker\n'
+            printf 'Comment=Device Linker desktop application\n'
+            printf 'Exec=/usr/bin/device-linker\n'
+            printf 'Terminal=false\n'
+            printf 'Type=Application\n'
+            printf 'Categories=Utility;\n'
+          } > "${APP_ROOT}/usr/share/applications/device-linker.desktop"
+
+          dpkg-deb --build "${APP_ROOT}" flutter_app/build/release/flutter-linux.deb
+
+      - name: Build macOS installer (.dmg)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_path="$(find flutter_app/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
+          [ -n "${app_path}" ] || { echo "macOS .app not found"; exit 1; }
+          hdiutil create -volname "Device Linker" -srcfolder "${app_path}" -ov -format UDZO flutter_app/build/release/flutter-macos.dmg
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-${{ matrix.platform }}
+          path: ${{ matrix.package_glob }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
