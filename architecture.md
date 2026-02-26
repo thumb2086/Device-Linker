@@ -12,12 +12,12 @@
 - **語系**: 系統語言 / zh-TW / zh-CN / en
 
 ## 3. 中繼服務層 (Relay Service)
-- **平台**: Firebase Cloud Functions
+- **平台**: REST Backend API（Vercel / Node.js）
 - **流程**:
   1. Flutter App 送出簽名請求
-  2. Cloud Functions 驗證資料並代付 Gas
+  2. 後台驗證授權參數（含 `sessionId`、地址正規化、公鑰長度限制）
   3. 廣播交易到 Base Sepolia
-  4. 同步交易資料到 Firestore
+  4. 回傳授權/交易狀態給多平台客戶端（Flutter / Web / Desktop）
 
 ## 4. 區塊鏈層 (Blockchain)
 - **Network**: Base Sepolia

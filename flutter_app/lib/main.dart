@@ -11,6 +11,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pointycastle/export.dart' hide Padding, State;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -637,21 +638,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _extractSessionId(String raw) {
     final value = raw.trim();
 
-    if (value.startsWith('session_')) return value;
+    final direct = _validateSessionCandidate(value);
+    if (direct != null) return direct;
 
     const prefix1 = 'dlinker:login:';
     if (value.toLowerCase().startsWith(prefix1)) {
       final session = value.substring(prefix1.length).trim();
-      return session.isEmpty ? null : session;
+      return _validateSessionCandidate(session);
     }
 
     const prefix2 = 'dlinker://login/';
     if (value.toLowerCase().startsWith(prefix2)) {
       final session = value.substring(prefix2.length).trim();
-      return session.isEmpty ? null : session;
+      return _validateSessionCandidate(session);
+    }
+
+    final parsed = Uri.tryParse(value);
+    if (parsed != null) {
+      final querySession = _validateSessionCandidate(parsed.queryParameters['sessionId']);
+      if (querySession != null) return querySession;
+
+      if (parsed.pathSegments.length >= 2) {
+        final marker = parsed.pathSegments[parsed.pathSegments.length - 2].toLowerCase();
+        if (marker == 'login') {
+          final segment = _validateSessionCandidate(parsed.pathSegments.last);
+          if (segment != null) return segment;
+        }
+      }
     }
 
     return null;
+  }
+
+  String? _validateSessionCandidate(String? raw) {
+    if (raw == null) return null;
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    return DLinkerApi.isValidSessionId(value) ? value : null;
   }
 
   BetRequest? _extractBetRequest(String raw) {
@@ -1604,18 +1627,53 @@ class ContactRepository {
 
 class DLinkerApi {
   static const String _baseUrl = 'https://device-linker-api.vercel.app/api/';
+  static const int _defaultAuthTtlSeconds = 600;
+  static const int _minAuthTtlSeconds = 60;
+  static const int _maxAuthTtlSeconds = 3600;
+  static const int _maxPublicKeyLength = 1024;
+
+  static final RegExp _sessionIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$');
+  static final RegExp _addressPattern = RegExp(r'^0x[a-fA-F0-9]{40}$');
 
   final http.Client _client = http.Client();
+  String? _cachedAppVersion;
+
+  static bool isValidSessionId(String value) {
+    final clean = value.trim();
+    if (clean.isEmpty || clean.length > 128) return false;
+    if (_addressPattern.hasMatch(clean)) return false;
+    return _sessionIdPattern.hasMatch(clean);
+  }
+
+  Future<Map<String, dynamic>> createPendingAuthSession({int ttlSeconds = _defaultAuthTtlSeconds}) async {
+    if (ttlSeconds < _minAuthTtlSeconds || ttlSeconds > _maxAuthTtlSeconds) {
+      throw Exception('ttlSeconds must be between $_minAuthTtlSeconds and $_maxAuthTtlSeconds');
+    }
+
+    final authContext = await _buildAuthContext();
+    return _post('v3/auth/create', {
+      'ttlSeconds': ttlSeconds,
+      ...authContext,
+    });
+  }
+
+  Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
+    return _get('auth', queryParameters: {
+      'sessionId': _normalizeSessionId(sessionId),
+    });
+  }
 
   Future<void> sendAuth({
     required String sessionId,
     required String address,
     required String publicKey,
   }) async {
+    final authContext = await _buildAuthContext();
     final json = await _post('auth', {
-      'sessionId': sessionId,
-      'address': address.toLowerCase(),
-      'publicKey': publicKey,
+      'sessionId': _normalizeSessionId(sessionId),
+      'address': _normalizeAddress(address),
+      'publicKey': _normalizePublicKey(publicKey),
+      ...authContext,
     });
 
     if (json['success'] == true) return;
@@ -1632,11 +1690,11 @@ class DLinkerApi {
   }) async {
     final json = await _post('coinflip', {
       'gameId': gameId,
-      'address': address.toLowerCase(),
+      'address': _normalizeAddress(address),
       'side': side,
       'amount': amount,
       'signature': signature,
-      'publicKey': publicKey,
+      'publicKey': _normalizePublicKey(publicKey),
     });
 
     if (json['success'] == true) return;
@@ -1649,8 +1707,8 @@ class DLinkerApi {
     required String signature,
   }) async {
     final json = await _post('airdrop', {
-      'address': walletAddress.toLowerCase(),
-      'publicKey': publicKey,
+      'address': _normalizeAddress(walletAddress),
+      'publicKey': _normalizePublicKey(publicKey),
       'signature': signature,
     });
 
@@ -1663,7 +1721,7 @@ class DLinkerApi {
 
   Future<String> syncBalance(String walletAddress) async {
     final json = await _post('get-balance', {
-      'address': walletAddress.toLowerCase(),
+      'address': _normalizeAddress(walletAddress),
     });
 
     if (json.containsKey('balance')) {
@@ -1681,11 +1739,11 @@ class DLinkerApi {
     required String publicKey,
   }) async {
     final json = await _post('transfer', {
-      'from': from.toLowerCase(),
-      'to': to.toLowerCase(),
+      'from': _normalizeAddress(from),
+      'to': _normalizeAddress(to),
       'amount': amount,
       'signature': signature,
-      'publicKey': publicKey,
+      'publicKey': _normalizePublicKey(publicKey),
     });
 
     if (json['success'] == true) {
@@ -1701,7 +1759,7 @@ class DLinkerApi {
     int limit = 20,
   }) async {
     final json = await _post('history', {
-      'address': walletAddress.toLowerCase(),
+      'address': _normalizeAddress(walletAddress),
       'page': page,
       'limit': limit,
     });
@@ -1729,6 +1787,26 @@ class DLinkerApi {
     );
   }
 
+  Future<Map<String, dynamic>> _get(
+    String endpoint, {
+    Map<String, String>? queryParameters,
+  }) async {
+    final uri = Uri.parse('$_baseUrl$endpoint');
+    final url = queryParameters == null ? uri : uri.replace(queryParameters: queryParameters);
+
+    final response = await _client
+        .get(
+          url,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'D-Linker-Flutter-App',
+          },
+        )
+        .timeout(const Duration(seconds: 60));
+
+    return _parseResponse(response);
+  }
+
   Future<Map<String, dynamic>> _post(String endpoint, Map<String, dynamic> body) async {
     final url = Uri.parse('$_baseUrl$endpoint');
 
@@ -1743,6 +1821,10 @@ class DLinkerApi {
         )
         .timeout(const Duration(seconds: 60));
 
+    return _parseResponse(response);
+  }
+
+  Map<String, dynamic> _parseResponse(http.Response response) {
     final data = response.body;
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -1759,6 +1841,103 @@ class DLinkerApi {
     }
 
     throw Exception('Invalid JSON response');
+  }
+
+  Future<Map<String, String>> _buildAuthContext() async {
+    final platform = _resolvePlatform();
+    final appVersion = await _getAppVersion();
+    return {
+      'platform': platform,
+      'clientType': _resolveClientType(platform),
+      'deviceId': await AppStorage.getDeviceId(),
+      'appVersion': appVersion,
+    };
+  }
+
+  Future<String> _getAppVersion() async {
+    if (_cachedAppVersion != null && _cachedAppVersion!.isNotEmpty) {
+      return _cachedAppVersion!;
+    }
+
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final version = info.version.trim();
+      final build = info.buildNumber.trim();
+      if (version.isNotEmpty && build.isNotEmpty) {
+        _cachedAppVersion = '$version+$build';
+      } else if (version.isNotEmpty) {
+        _cachedAppVersion = version;
+      }
+    } catch (_) {
+      _cachedAppVersion = null;
+    }
+
+    return _cachedAppVersion ?? 'unknown';
+  }
+
+  String _resolvePlatform() {
+    if (kIsWeb) return 'web';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'android';
+      case TargetPlatform.iOS:
+        return 'ios';
+      case TargetPlatform.macOS:
+        return 'macos';
+      case TargetPlatform.windows:
+        return 'windows';
+      case TargetPlatform.linux:
+        return 'linux';
+      case TargetPlatform.fuchsia:
+        return 'fuchsia';
+    }
+  }
+
+  String _resolveClientType(String platform) {
+    switch (platform) {
+      case 'android':
+      case 'ios':
+        return 'mobile';
+      case 'web':
+        return 'web';
+      case 'macos':
+      case 'windows':
+      case 'linux':
+        return 'desktop';
+      default:
+        return 'unknown';
+    }
+  }
+
+  String _normalizeSessionId(String raw) {
+    final sessionId = raw.trim();
+    if (!isValidSessionId(sessionId)) {
+      throw Exception('Invalid sessionId format');
+    }
+    return sessionId;
+  }
+
+  String _normalizePublicKey(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) {
+      throw Exception('Missing publicKey');
+    }
+    if (value.length > _maxPublicKeyLength) {
+      throw Exception('publicKey exceeds max length');
+    }
+    return value;
+  }
+
+  String _normalizeAddress(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) {
+      throw Exception('Missing address');
+    }
+    try {
+      return EthereumAddress.fromHex(value).hexEip55.toLowerCase();
+    } catch (_) {
+      throw Exception('Invalid address format');
+    }
   }
 }
 
@@ -2078,6 +2257,7 @@ class NotificationService {
 class AppStorage {
   static const String _languageKey = 'app_language';
   static const String _lastBalanceKey = 'last_known_balance';
+  static const String _deviceIdKey = 'device_id';
 
   static Future<AppLanguage> getLanguage() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2099,6 +2279,19 @@ class AppStorage {
   static Future<void> setLastKnownBalance(String balance) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastBalanceKey, balance);
+  }
+
+  static Future<String> getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_deviceIdKey);
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    final generated = 'dlinker_${base64UrlEncode(bytes).replaceAll('=', '')}';
+
+    await prefs.setString(_deviceIdKey, generated);
+    return generated;
   }
 }
 

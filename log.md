@@ -1,6 +1,20 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-02-26] Auth API Alignment: Multi-Platform Session Metadata + Validation
+**執行內容 (API Contract Sync):**
+- **授權參數升級**: Flutter `DLinkerApi.sendAuth` 新增送出 `platform`、`clientType`、`deviceId`、`appVersion`，對齊後台多平台授權規格。
+- **新流程方法補齊**:
+  - 新增 `createPendingAuthSession()` 對應 `POST /api/v3/auth/create`（含 TTL 驗證 60-3600 秒，預設 600 秒）。
+  - 新增 `getAuthStatus()` 對應 `GET /api/auth?sessionId=...`。
+- **輸入驗證補強**:
+  - 加入 `sessionId` 格式驗證與掃碼/深連結 session normalize。
+  - 地址先正規化驗證（相容 `ethers.getAddress` 檢查邏輯）再以小寫送出以保留舊流程。
+  - `publicKey` 增加長度上限防呆。
+- **裝置識別補齊**: 新增 `AppStorage.getDeviceId()`，首次產生並持久化 `deviceId`。
+- **文件同步**: `README.md`、`architecture.md`、`agent.md` 更新為 REST 後台為主，Firebase 標示為 legacy。
+
+---
 ## [2026-02-26] Repo Cleanup: Android Kotlin Legacy Removal
 **執行內容 (Repository Refactor):**
 - 移除舊版 Android Kotlin 模組 `app/`。
