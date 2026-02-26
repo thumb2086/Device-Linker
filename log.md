@@ -1,6 +1,15 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-02-26] Repo Cleanup: Android Kotlin Legacy Removal
+**執行內容 (Repository Refactor):**
+- 移除舊版 Android Kotlin 模組 `app/`。
+- 移除根目錄舊 Gradle 結構：`build.gradle.kts`、`settings.gradle.kts`、`gradle.properties`、`gradle/`、`gradlew*`。
+- 更新專案文件為 Flutter-first：`README.md`、`architecture.md`、`agent.md`、`todo.md`。
+- 調整 `.gitignore`，改為 Flutter 專案與平台產物為主。
+
+
+---
 ## [2026-02-18] Feature Update: Deep Link & Manual Auth Code Support
 **執行內容 (Path B: New Feature):**
 - **Deep Link 支援**:

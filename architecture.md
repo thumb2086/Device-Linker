@@ -1,26 +1,25 @@
-# 🏗️ D-Linker 技術架構
+# D-Linker 技術架構（Flutter）
 
-## 1. 帳戶推導邏輯 (Identity Derivation)
-- **Seed**: `ANDROID_ID` (唯一硬體識別碼)
-- **Salt**: `D-Linker-Hardware-Anchor-2023` (防止 Rainbow Table 攻擊)
-- **Algo**: `SHA-256`
-- **Output**: 40-char Hex (Ethereum style address)
+## 1. 身分與金鑰層 (Identity & Key Management)
+- **演算法**: `secp256k1`
+- **私鑰來源**: App 首次啟動時以安全亂數產生
+- **儲存策略**: 優先使用 `flutter_secure_storage`，失敗時回退到本地儲存
+- **地址推導**: 由公鑰計算 Keccak-256，取後 20 bytes 形成 EVM 地址
 
-## 2. 金鑰管理 (Key Management)
-- **Address**: 由 `ANDROID_ID` 確定性生成。
-- **Private Key**: 
-  - 儲存位置：Android KeyStore (硬件隔離區)。
-  - 目的：僅用於「離線簽名」交易。
-  - 安全規範：私鑰永不離開設備，永不備份到雲端。
+## 2. 應用層 (Flutter App)
+- **平台**: Flutter（Android / iOS / Web / Linux / Windows）
+- **核心功能**: 錢包地址生成、餘額同步、轉帳、搬家轉移、QR 掃描、深連結授權
+- **語系**: 系統語言 / zh-TW / zh-CN / en
 
-## 3. 中繼轉發 (Relay Service)
-- **Platform**: Firebase Cloud Functions
-- **Flow**: 
-  1. Android App 發起轉帳請求 + 數位簽名。
-  2. Cloud Functions 接收請求。
-  3. Cloud Functions 調用管理員錢包代付 Gas 費並廣播至 Base Sepolia。
-  4. 交易成功後更新 Firestore 緩存。
+## 3. 中繼服務層 (Relay Service)
+- **平台**: Firebase Cloud Functions
+- **流程**:
+  1. Flutter App 送出簽名請求
+  2. Cloud Functions 驗證資料並代付 Gas
+  3. 廣播交易到 Base Sepolia
+  4. 同步交易資料到 Firestore
 
 ## 4. 區塊鏈層 (Blockchain)
-- **Network**: Base Sepolia (Ethereum L2 Testnet)
-- **Asset**: ERC-20 Token (D-Linker Token)
+- **Network**: Base Sepolia
+- **Asset**: ERC-20 (D-Linker Token)
+- **目標**: 透明、可驗證、不可竄改的交易帳本

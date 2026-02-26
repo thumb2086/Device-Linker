@@ -26,6 +26,15 @@ firebase-debug.*.log
 *.key
 google-services.json
 
-# 避免上傳加密相關的私鑰存儲
-/app/src/main/assets/keys/*
-/app/secret.properties
+# Flutter build/cache
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.pub/
+flutter_app/.pub-cache/
+
+# Flutter Android 產物與金鑰
+flutter_app/android/local.properties
+flutter_app/android/key.properties
