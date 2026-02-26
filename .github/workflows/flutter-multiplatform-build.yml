@@ -67,6 +67,28 @@ jobs:
         working-directory: flutter_app
         run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
+      - name: Patch Android Gradle Kotlin DSL compatibility
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+
+          if [ -f android/app/build.gradle.kts ]; then
+            # Kotlin 2.x deprecates kotlinOptions.jvmTarget in Gradle scripts.
+            perl -0pi -e 's/\n\s*kotlinOptions\s*\{\s*\n\s*jvmTarget\s*=\s*JavaVersion\.VERSION_[0-9]+\.toString\(\)\s*\n\s*\}\n/\n/sg' android/app/build.gradle.kts
+
+            if ! grep -q 'compilerOptions {' android/app/build.gradle.kts; then
+              {
+                printf '\n'
+                printf 'kotlin {\n'
+                printf '    compilerOptions {\n'
+                printf '        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle.kts
+            fi
+          fi
+
       - name: Configure Android release signing
         if: matrix.platform == 'android'
         working-directory: flutter_app
@@ -115,19 +137,23 @@ jobs:
             if ! grep -q "CI_ANDROID_RELEASE_SIGNING" android/app/build.gradle.kts; then
               {
                 printf '\n// CI_ANDROID_RELEASE_SIGNING\n'
-                printf 'val ciKeystoreProperties = java.util.Properties().apply {\n'
-                printf '    val file = rootProject.file("key.properties")\n'
-                printf '    if (file.exists()) {\n'
-                printf '        file.inputStream().use { load(it) }\n'
+                printf 'val ciKeystoreProperties = mutableMapOf<String, String>()\n'
+                printf 'rootProject.file("key.properties").takeIf { it.exists() }?.readLines()?.forEach { line ->\n'
+                printf '    val trimmed = line.trim()\n'
+                printf '    if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {\n'
+                printf '        val idx = trimmed.indexOf("=")\n'
+                printf '        if (idx > 0) {\n'
+                printf '            ciKeystoreProperties[trimmed.substring(0, idx).trim()] = trimmed.substring(idx + 1).trim()\n'
+                printf '        }\n'
                 printf '    }\n'
                 printf '}\n\n'
                 printf 'android {\n'
                 printf '    signingConfigs {\n'
                 printf '        maybeCreate("release").apply {\n'
-                printf '            storeFile = file(ciKeystoreProperties.getProperty("storeFile"))\n'
-                printf '            storePassword = ciKeystoreProperties.getProperty("storePassword")\n'
-                printf '            keyAlias = ciKeystoreProperties.getProperty("keyAlias")\n'
-                printf '            keyPassword = ciKeystoreProperties.getProperty("keyPassword")\n'
+                printf '            storeFile = ciKeystoreProperties["storeFile"]?.let { file(it) }\n'
+                printf '            storePassword = ciKeystoreProperties["storePassword"]\n'
+                printf '            keyAlias = ciKeystoreProperties["keyAlias"]\n'
+                printf '            keyPassword = ciKeystoreProperties["keyPassword"]\n'
                 printf '        }\n'
                 printf '    }\n'
                 printf '    buildTypes {\n'
