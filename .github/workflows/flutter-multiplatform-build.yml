@@ -335,27 +335,27 @@ jobs:
           AppVersion=$version
           DefaultDirName={autopf}\\Device Linker
           DefaultGroupName=Device Linker
-          OutputDir=flutter_app\\build\\release
+          OutputDir=.
           OutputBaseFilename=flutter-windows-installer
           Compression=lzma
           SolidCompression=yes
           WizardStyle=modern
 
           [Languages]
-          Name: ""english""; MessagesFile: ""compiler:Default.isl""
+          Name: "english"; MessagesFile: "compiler:Default.isl"
 
           [Files]
-          Source: ""flutter_app\\build\\windows\\x64\\runner\\Release\\*""; DestDir: ""{app}""; Flags: ignoreversion recursesubdirs createallsubdirs
+          Source: "flutter_app\\build\\windows\\x64\\runner\\Release\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Icons]
-          Name: ""{group}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""
-          Name: ""{autodesktop}\\Device Linker""; Filename: ""{app}\\device_linker_flutter.exe""; Tasks: desktopicon
+          Name: "{group}\\Device Linker"; Filename: "{app}\\device_linker_flutter.exe"
+          Name: "{autodesktop}\\Device Linker"; Filename: "{app}\\device_linker_flutter.exe"; Tasks: desktopicon
 
           [Tasks]
-          Name: ""desktopicon""; Description: ""Create a desktop icon""; GroupDescription: ""Additional icons:""; Flags: unchecked
+          Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 
           [Run]
-          Filename: ""{app}\\device_linker_flutter.exe""; Description: ""Launch Device Linker""; Flags: nowait postinstall skipifsilent
+          Filename: "{app}\\device_linker_flutter.exe"; Description: "Launch Device Linker"; Flags: nowait postinstall skipifsilent
           "@ | Set-Content -Path $issPath -Encoding ASCII
 
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" $issPath
