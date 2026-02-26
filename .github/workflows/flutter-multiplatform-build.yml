@@ -67,6 +67,107 @@ jobs:
         working-directory: flutter_app
         run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
+      - name: Configure Android release signing
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          resolve_secret() {
+            local primary="$1"
+            local fallback="$2"
+            if [ -n "${primary}" ]; then
+              printf '%s' "${primary}"
+            else
+              printf '%s' "${fallback}"
+            fi
+          }
+
+          KS_B64="$(resolve_secret "${KEYSTORE_BASE64}" "${ANDROID_KEYSTORE_BASE64}")"
+          KS_PASS="$(resolve_secret "${KEYSTORE_PASSWORD}" "${ANDROID_KEYSTORE_PASSWORD}")"
+          KS_ALIAS="$(resolve_secret "${KEY_ALIAS}" "${ANDROID_KEY_ALIAS}")"
+          KEY_PASS="$(resolve_secret "${KEY_PASSWORD}" "${ANDROID_KEY_PASSWORD}")"
+
+          if [ -z "${KS_B64}" ] || [ -z "${KS_PASS}" ] || [ -z "${KS_ALIAS}" ] || [ -z "${KEY_PASS}" ]; then
+            echo "::error::Missing Android signing secrets. Set KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD (or ANDROID_* equivalents)."
+            exit 1
+          fi
+
+          printf '%s' "${KS_B64}" | base64 --decode > android/app/release.jks
+
+          {
+            printf 'storePassword=%s\n' "${KS_PASS}"
+            printf 'keyPassword=%s\n' "${KEY_PASS}"
+            printf 'keyAlias=%s\n' "${KS_ALIAS}"
+            printf 'storeFile=%s\n' 'app/release.jks'
+          } > android/key.properties
+
+          if [ -f android/app/build.gradle.kts ]; then
+            if ! grep -q "CI_ANDROID_RELEASE_SIGNING" android/app/build.gradle.kts; then
+              {
+                printf '\n// CI_ANDROID_RELEASE_SIGNING\n'
+                printf 'val ciKeystoreProperties = java.util.Properties().apply {\n'
+                printf '    val file = rootProject.file("key.properties")\n'
+                printf '    if (file.exists()) {\n'
+                printf '        file.inputStream().use { load(it) }\n'
+                printf '    }\n'
+                printf '}\n\n'
+                printf 'android {\n'
+                printf '    signingConfigs {\n'
+                printf '        maybeCreate("release").apply {\n'
+                printf '            storeFile = file(ciKeystoreProperties.getProperty("storeFile"))\n'
+                printf '            storePassword = ciKeystoreProperties.getProperty("storePassword")\n'
+                printf '            keyAlias = ciKeystoreProperties.getProperty("keyAlias")\n'
+                printf '            keyPassword = ciKeystoreProperties.getProperty("keyPassword")\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '    buildTypes {\n'
+                printf '        getByName("release") {\n'
+                printf '            signingConfig = signingConfigs.getByName("release")\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle.kts
+            fi
+          elif [ -f android/app/build.gradle ]; then
+            if ! grep -q "CI_ANDROID_RELEASE_SIGNING" android/app/build.gradle; then
+              {
+                printf '\n// CI_ANDROID_RELEASE_SIGNING\n'
+                printf 'def ciKeystoreProperties = new java.util.Properties()\n'
+                printf "def ciKeystorePropertiesFile = rootProject.file('key.properties')\n"
+                printf 'if (ciKeystorePropertiesFile.exists()) {\n'
+                printf '    ciKeystoreProperties.load(new java.io.FileInputStream(ciKeystorePropertiesFile))\n'
+                printf '}\n\n'
+                printf 'android {\n'
+                printf '    signingConfigs {\n'
+                printf '        def releaseConfig = maybeCreate("release")\n'
+                printf "        releaseConfig.storeFile = file(ciKeystoreProperties['storeFile'])\n"
+                printf "        releaseConfig.storePassword = ciKeystoreProperties['storePassword']\n"
+                printf "        releaseConfig.keyAlias = ciKeystoreProperties['keyAlias']\n"
+                printf "        releaseConfig.keyPassword = ciKeystoreProperties['keyPassword']\n"
+                printf '    }\n'
+                printf '    buildTypes {\n'
+                printf '        release {\n'
+                printf '            signingConfig signingConfigs.release\n'
+                printf '        }\n'
+                printf '    }\n'
+                printf '}\n'
+              } >> android/app/build.gradle
+            fi
+          else
+            echo "::error::Android app build file not found"
+            exit 1
+          fi
+
       - name: Enable Android desugaring for flutter_local_notifications
         if: matrix.platform == 'android'
         working-directory: flutter_app
