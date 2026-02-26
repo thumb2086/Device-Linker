@@ -76,8 +76,14 @@ jobs:
 
           if [ "${{ matrix.platform }}" = "android" ]; then
             MANIFEST="android/app/src/main/AndroidManifest.xml"
-            if [ -f "$MANIFEST" ] && ! grep -q 'android:scheme="dlinker"' "$MANIFEST"; then
-              perl -0777 -i -pe 's#\s*</activity>#\n            <!-- Supports dlinker://login/<sessionId> -->\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" android:host="login" />\n            </intent-filter>\n\n            <!-- Supports dlinker:login:<sessionId> -->\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+            if [ -f "$MANIFEST" ]; then
+              if ! grep -q 'android:scheme="dlinker"[[:space:]]\+android:host="login"' "$MANIFEST"; then
+                perl -0777 -i -pe 's#\s*</activity>#\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" android:host="login" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+              fi
+
+              if ! grep -q '<data android:scheme="dlinker" />' "$MANIFEST"; then
+                perl -0777 -i -pe 's#\s*</activity>#\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="dlinker" />\n            </intent-filter>\n\n        </activity>#s' "$MANIFEST"
+              fi
             fi
           fi
 
