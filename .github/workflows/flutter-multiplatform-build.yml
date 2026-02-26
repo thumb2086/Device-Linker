@@ -75,43 +75,19 @@ jobs:
         run: |
           if [ -f android/app/build.gradle.kts ]; then
             if ! grep -q "isCoreLibraryDesugaringEnabled = true" android/app/build.gradle.kts; then
-              cat <<'EOF' >> android/app/build.gradle.kts
-
-android {
-    compileOptions {
-        isCoreLibraryDesugaringEnabled = true
-    }
-}
-EOF
+              printf '\nandroid {\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n    }\n}\n' >> android/app/build.gradle.kts
             fi
 
             if ! grep -q "coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:" android/app/build.gradle.kts; then
-              cat <<'EOF' >> android/app/build.gradle.kts
-
-dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
-}
-EOF
+              printf '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")\n}\n' >> android/app/build.gradle.kts
             fi
           elif [ -f android/app/build.gradle ]; then
             if ! grep -q "coreLibraryDesugaringEnabled true" android/app/build.gradle; then
-              cat <<'EOF' >> android/app/build.gradle
-
-android {
-    compileOptions {
-        coreLibraryDesugaringEnabled true
-    }
-}
-EOF
+              printf '\nandroid {\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n    }\n}\n' >> android/app/build.gradle
             fi
 
             if ! grep -q "coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:" android/app/build.gradle; then
-              cat <<'EOF' >> android/app/build.gradle
-
-dependencies {
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
-}
-EOF
+              printf '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"\n}\n' >> android/app/build.gradle
             fi
           else
             echo "Android app build file not found"
