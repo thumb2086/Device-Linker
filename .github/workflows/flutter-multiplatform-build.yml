@@ -73,7 +73,7 @@ jobs:
         run: flutter create . --project-name device_linker_flutter --org com.devicelinker --platforms=${{ matrix.flutter_platforms }}
 
       - name: Configure deep link schemes
-        if: matrix.platform == 'android' || matrix.platform == 'ios'
+        if: matrix.platform == 'android' || matrix.platform == 'ios' || matrix.platform == 'macos'
         working-directory: flutter_app
         shell: bash
         run: |
@@ -94,6 +94,13 @@ jobs:
 
           if [ "${{ matrix.platform }}" = "ios" ]; then
             PLIST="ios/Runner/Info.plist"
+            if [ -f "$PLIST" ] && ! grep -q '<string>dlinker</string>' "$PLIST"; then
+              perl -0777 -i -pe 's#</dict>\n</plist>#  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleURLName</key>\n      <string>device-linker</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>dlinker</string>\n      </array>\n    </dict>\n  </array>\n</dict>\n</plist>#s' "$PLIST"
+            fi
+          fi
+
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            PLIST="macos/Runner/Info.plist"
             if [ -f "$PLIST" ] && ! grep -q '<string>dlinker</string>' "$PLIST"; then
               perl -0777 -i -pe 's#</dict>\n</plist>#  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleURLName</key>\n      <string>device-linker</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>dlinker</string>\n      </array>\n    </dict>\n  </array>\n</dict>\n</plist>#s' "$PLIST"
             fi
@@ -354,6 +361,12 @@ jobs:
           [Tasks]
           Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 
+          [Registry]
+          Root: HKCR; Subkey: "dlinker"; ValueType: string; ValueName: ""; ValueData: "URL:Device Linker Protocol"; Flags: uninsdeletekey
+          Root: HKCR; Subkey: "dlinker"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
+          Root: HKCR; Subkey: "dlinker\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\device_linker_flutter.exe,0"; Flags: uninsdeletekey
+          Root: HKCR; Subkey: "dlinker\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\device_linker_flutter.exe"" ""%1"""; Flags: uninsdeletekey
+
           [Run]
           Filename: "{app}\\device_linker_flutter.exe"; Description: "Launch Device Linker"; Flags: nowait postinstall skipifsilent
           "@ | Set-Content -Path $issPath -Encoding ASCII
@@ -385,7 +398,7 @@ jobs:
             printf 'Priority: optional\n'
             printf 'Architecture: amd64\n'
             printf 'Maintainer: Device Linker Team\n'
-            printf 'Depends: libgtk-3-0\n'
+            printf 'Depends: libgtk-3-0, desktop-file-utils\n'
             printf 'Description: Device Linker desktop application\n'
           } > "${APP_ROOT}/DEBIAN/control"
 
@@ -397,7 +410,20 @@ jobs:
             printf 'Terminal=false\n'
             printf 'Type=Application\n'
             printf 'Categories=Utility;\n'
+            printf 'MimeType=x-scheme-handler/dlinker;\n'
           } > "${APP_ROOT}/usr/share/applications/device-linker.desktop"
+
+          {
+            printf '#!/bin/sh\n'
+            printf 'set -e\n'
+            printf 'if command -v xdg-mime >/dev/null 2>&1; then\n'
+            printf '  xdg-mime default device-linker.desktop x-scheme-handler/dlinker || true\n'
+            printf 'fi\n'
+            printf 'if command -v update-desktop-database >/dev/null 2>&1; then\n'
+            printf '  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true\n'
+            printf 'fi\n'
+          } > "${APP_ROOT}/DEBIAN/postinst"
+          chmod 0755 "${APP_ROOT}/DEBIAN/postinst"
 
           dpkg-deb --build "${APP_ROOT}" flutter_app/build/release/flutter-linux.deb
 
