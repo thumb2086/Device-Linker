@@ -30,6 +30,11 @@ flutter test
 flutter run
 ```
 
+### iOS 實機安裝注意
+- 本 repo 預設不提交 `flutter_app/ios/`，需先生成平台殼層。
+- 可執行 `flutter_app/scripts/bootstrap_ios.sh` 一次完成 iOS 初始化與 release build（no-codesign）。
+- 要安裝到 iPhone，仍需在 macOS + Xcode 進行簽名與匯出 `.ipa`（設定 Team / Provisioning Profile）。
+
 ### 2) Backend API
 - Flutter 端預設呼叫 `https://device-linker-api.vercel.app/api/`
 - 授權流程:

@@ -1,6 +1,20 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-02] iOS Build Bootstrap: Platform Shell + Device Install Guidance
+**執行內容 (Build Reliability):**
+- **根因確認**: `flutter_app/ios` 未提交，導致本地無法直接執行 iOS 編譯與安裝流程。
+- **腳本補齊**: 新增 `flutter_app/scripts/bootstrap_ios.sh`，提供 iOS 一鍵初始化：
+  - 檢查 `flutter` 是否可用
+  - 限制 iOS build 需在 macOS 執行
+  - 執行 `flutter create` 生成 `ios/`
+  - 執行 `flutter pub get` 與 `flutter build ios --release --no-codesign`
+- **文件同步**:
+  - `flutter_app/README.md` 新增 iOS 章節（生成平台殼層與實機安裝說明）
+  - `README.md` 新增 iOS 實機安裝注意（需 Xcode 簽名並匯出 `.ipa`）
+- **待辦更新**: `todo.md` 新增「建立 iOS 簽名與 `.ipa` 匯出流程」項目，作為可安裝實機版本的下一步。
+
+---
 ## [2026-02-26] Auth API Alignment: Multi-Platform Session Metadata + Validation
 **執行內容 (API Contract Sync):**
 - **授權參數升級**: Flutter `DLinkerApi.sendAuth` 新增送出 `platform`、`clientType`、`deviceId`、`appVersion`，對齊後台多平台授權規格。

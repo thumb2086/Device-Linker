@@ -29,3 +29,16 @@ flutter create . --project-name device_linker_flutter --org com.devicelinker --p
 flutter pub get
 flutter run
 ```
+
+## iOS build and install notes
+`ios/` is not committed in this repo by design. Generate it first:
+
+```bash
+cd flutter_app
+./scripts/bootstrap_ios.sh
+```
+
+Physical iPhone install requires Apple signing:
+- open `ios/Runner.xcworkspace` in Xcode
+- set Team / Bundle Identifier / Provisioning Profile
+- Product -> Archive -> export signed `.ipa`
