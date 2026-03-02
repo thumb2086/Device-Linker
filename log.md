@@ -1,6 +1,13 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-02] CI Performance Fix: Disable Gradle VFS Watch on Android
+**執行內容 (Build Speed/Stability):**
+- 在 `.github/workflows/flutter-multiplatform-build.yml` 的 Android 流程中，於 `flutter pub get` 後新增：
+  - `org.gradle.vfs.watch=false` 寫入 `flutter_app/android/gradle.properties`
+- 目的：降低 GitHub Actions 上 Gradle `Already watching path` 例外造成的卡頓/超慢建置問題。
+
+---
 ## [2026-03-02] Docs: Scarlet Re-sign Install Guide
 **執行內容 (User Support):**
 - 新增 `scarlet-install-guide.md`，提供 iOS 使用者用 Scarlet 安裝 `flutter-ios-unsigned.ipa` 的完整流程。
