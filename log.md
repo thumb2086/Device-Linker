@@ -3,7 +3,7 @@
 ---
 ## [2026-03-02] Docs: Scarlet Re-sign Install Guide
 **執行內容 (User Support):**
-- 新增 `docs/scarlet-install-guide.md`，提供 iOS 使用者用 Scarlet 安裝 `flutter-ios-unsigned.ipa` 的完整流程。
+- 新增 `scarlet-install-guide.md`，提供 iOS 使用者用 Scarlet 安裝 `flutter-ios-unsigned.ipa` 的完整流程。
 - 補充首次開啟失敗處理與常見問題（憑證信任、憑證失效重簽、重簽後需重新登入）。
 - 新增客服可直接複製的快速回覆內容，降低安裝支援成本。
 
