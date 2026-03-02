@@ -1,6 +1,16 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-02] CI Update: iOS Unsigned IPA Artifact for Re-sign Flow
+**執行內容 (Release Pipeline):**
+- 調整 `.github/workflows/flutter-multiplatform-build.yml` iOS 產物由 `flutter-ios.zip` 改為 `flutter-ios-unsigned.ipa`。
+- iOS 打包流程改為建立 `Payload/Runner.app` 再壓成 `.ipa`，可直接提供重簽工具使用。
+- 文件同步：
+  - `README.md` 新增 CI iOS unsigned IPA 說明
+  - `flutter_app/README.md` 新增 iOS 產物用途說明（需重簽/簽名）
+- `todo.md` 勾選「CI 輸出 iOS unsigned .ipa」完成項目。
+
+---
 ## [2026-03-02] iOS Build Bootstrap: Platform Shell + Device Install Guidance
 **執行內容 (Build Reliability):**
 - **根因確認**: `flutter_app/ios` 未提交，導致本地無法直接執行 iOS 編譯與安裝流程。

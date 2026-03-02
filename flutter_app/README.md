@@ -42,3 +42,7 @@ Physical iPhone install requires Apple signing:
 - open `ios/Runner.xcworkspace` in Xcode
 - set Team / Bundle Identifier / Provisioning Profile
 - Product -> Archive -> export signed `.ipa`
+
+CI release artifact for iOS:
+- `.github/workflows/flutter-multiplatform-build.yml` now outputs `flutter-ios-unsigned.ipa`
+- this IPA is unsigned and intended for re-signing/distribution workflows

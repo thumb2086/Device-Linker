@@ -49,6 +49,7 @@ flutter run
 
 ## CI/CD
 - `flutter-multiplatform-build.yml`: Flutter 多平台建置與釋出流程
+- iOS 會輸出 `flutter-ios-unsigned.ipa`（未簽名），可供後續 Apple 簽名或第三方重簽工具使用
 - `deploy-functions.yml`: 舊版 Firebase 部署流程（legacy）
 
 ## 遷移備註

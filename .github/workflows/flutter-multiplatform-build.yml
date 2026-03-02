@@ -23,7 +23,7 @@ jobs:
             os: macos-latest
             flutter_platforms: ios
             build_command: flutter build ios --release --no-codesign
-            package_glob: flutter_app/build/release/flutter-ios.zip
+            package_glob: flutter_app/build/release/flutter-ios-unsigned.ipa
           - platform: web
             os: ubuntu-latest
             flutter_platforms: web
@@ -292,8 +292,12 @@ jobs:
               ;;
             ios)
               [ -d flutter_app/build/ios/iphoneos/Runner.app ] || { echo "iOS Runner.app not found"; exit 1; }
-              cd flutter_app/build/ios/iphoneos
-              zip -r ../../release/flutter-ios.zip Runner.app
+              temp_dir="flutter_app/build/release/ios-ipa/Payload"
+              rm -rf "flutter_app/build/release/ios-ipa"
+              mkdir -p "${temp_dir}"
+              cp -R flutter_app/build/ios/iphoneos/Runner.app "${temp_dir}/Runner.app"
+              cd flutter_app/build/release/ios-ipa
+              zip -r ../flutter-ios-unsigned.ipa Payload
               ;;
             web)
               [ -d flutter_app/build/web ] || { echo "Web build folder not found"; exit 1; }

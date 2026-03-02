@@ -3,6 +3,7 @@
 ## 近期優先
 - [ ] 完成 `flutter_app` 多平台初始化（android / ios / web / linux / windows）
 - [ ] 建立 iOS 簽名與 `.ipa` 匯出流程（可安裝至實機）
+- [x] 調整 CI 輸出 iOS unsigned `.ipa`（供重簽工具使用）
 - [ ] 整理 API 設定與環境變數（dev / staging / prod）
 - [ ] 建立 Flutter 端交易流程整合測試
 
