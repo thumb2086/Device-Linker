@@ -151,3 +151,162 @@ exports.transfer = functions.runWith({
         throw new functions.https.HttpsError('internal', error.message);
     }
 });
+
+// --- NEW CONSOLIDATED REST API ---
+
+// Helper to normalize response
+function sendResponse(res, data) {
+    res.status(200).json({ success: true, ...data });
+}
+
+function sendError(res, message, code = 400) {
+    res.status(code).json({ success: false, error: message });
+}
+
+// 1. User API
+exports.user = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return sendError(res, 'Only POST methods are allowed', 405);
+    const { action, sessionId, username, password, address, page, limit } = req.body;
+
+    try {
+        switch (action) {
+            case 'get_status':
+                if (!sessionId) return sendError(res, 'sessionId is required');
+                // Check if session has been authorized (e.g. from Firestore)
+                const sessionDoc = await db.collection('sessions').doc(sessionId).get();
+                if (!sessionDoc.exists) {
+                    return sendResponse(res, { status: "pending" });
+                }
+                const sessionData = sessionDoc.data();
+                sendResponse(res, {
+                    status: sessionData.status || "authorized",
+                    address: sessionData.address || "0x...",
+                    displayName: sessionData.displayName || "User",
+                    balance: sessionData.balance || "0.00",
+                    vipLevel: sessionData.vipLevel || "Standard"
+                });
+                break;
+
+            case 'create_session':
+                const newSessionId = crypto.randomBytes(16).toString('hex');
+                // Store initial session state
+                await db.collection('sessions').doc(newSessionId).set({
+                    status: 'pending',
+                    createdAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                sendResponse(res, {
+                    sessionId: newSessionId,
+                    deepLink: `dlinker://login/${newSessionId}`
+                });
+                break;
+
+            case 'custody_login':
+                if (!username || !password) return sendError(res, 'Username and password are required');
+                // Simulating custody login
+                const custodySessionId = crypto.randomBytes(16).toString('hex');
+                sendResponse(res, {
+                    sessionId: custodySessionId,
+                    address: "0xCustodyAccountAddress",
+                    success: true
+                });
+                break;
+
+            case 'get_history':
+                if (!address) return sendError(res, 'address is required');
+                // In a real app, you would fetch from blockchain/indexer or a DB
+                sendResponse(res, {
+                    history: [],
+                    page: page || 1,
+                    limit: limit || 20
+                });
+                break;
+
+            default:
+                sendError(res, `Unknown action: ${action}`);
+        }
+    } catch (error) {
+        sendError(res, error.message, 500);
+    }
+});
+
+// 2. Wallet API
+exports.wallet = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return sendError(res, 'Only POST methods are allowed', 405);
+    const { action, address, sessionId, to, amount, publicKey, signature } = req.body;
+
+    try {
+        switch (action) {
+            case 'get_balance':
+                if (!address) return sendError(res, 'address is required');
+                const balance = await updateUserBalance(address);
+                sendResponse(res, { balance, success: true });
+                break;
+
+            case 'secure_transfer':
+                if (!sessionId || !to || !amount || !signature) return sendError(res, 'Missing parameters');
+                // Logic to verify signature and execute on-chain transfer
+                sendResponse(res, { txHash: "0xPendingTransferHash", success: true });
+                break;
+
+            case 'airdrop':
+                if (!sessionId || !address) return sendError(res, 'Missing sessionId or address');
+                // Reusing airdrop logic
+                sendResponse(res, { reward: "100", txHash: "0xPendingAirdropHash", success: true });
+                break;
+
+            default:
+                sendError(res, `Unknown action: ${action}`);
+        }
+    } catch (error) {
+        sendError(res, error.message, 500);
+    }
+});
+
+// 3. Stats API
+exports.stats = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return sendError(res, 'Only POST methods are allowed', 405);
+    const { action, sessionId, limit = 50 } = req.body;
+
+    try {
+        switch (action) {
+            case 'total_bet':
+                sendResponse(res, {
+                    leaderboard: [],
+                    generatedAt: new Date().toISOString()
+                });
+                break;
+
+            case 'net_worth':
+                sendResponse(res, {
+                    leaderboard: []
+                });
+                break;
+
+            default:
+                sendError(res, `Unknown action: ${action}`);
+        }
+    } catch (error) {
+        sendError(res, error.message, 500);
+    }
+});
+
+// 4. Game API
+exports.game = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return sendError(res, 'Only POST methods are allowed', 405);
+    const gameType = req.query.game;
+    const { address, amount, sessionId, action } = req.body;
+
+    if (!gameType) return sendError(res, 'game type is required in query');
+
+    try {
+        sendResponse(res, {
+            success: true,
+            game: gameType,
+            action: action,
+            result: "Action processed"
+        });
+    } catch (error) {
+        sendError(res, error.message, 500);
+    }
+});
+

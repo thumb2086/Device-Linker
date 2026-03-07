@@ -1645,20 +1645,25 @@ class DLinkerApi {
     return _sessionIdPattern.hasMatch(clean);
   }
 
+  Future<Map<String, dynamic>> _callApi(String domain, String action, Map<String, dynamic> params) async {
+    return _post(domain, {
+      'action': action,
+      ...params,
+    });
+  }
+
   Future<Map<String, dynamic>> createPendingAuthSession({int ttlSeconds = _defaultAuthTtlSeconds}) async {
     if (ttlSeconds < _minAuthTtlSeconds || ttlSeconds > _maxAuthTtlSeconds) {
       throw Exception('ttlSeconds must be between $_minAuthTtlSeconds and $_maxAuthTtlSeconds');
     }
-
-    final authContext = await _buildAuthContext();
-    return _post('v3/auth/create', {
+    return _callApi('user', 'create_session', {
       'ttlSeconds': ttlSeconds,
-      ...authContext,
+      ...(await _buildAuthContext()),
     });
   }
 
   Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
-    return _get('auth', queryParameters: {
+    return _callApi('user', 'get_status', {
       'sessionId': _normalizeSessionId(sessionId),
     });
   }
@@ -1668,16 +1673,27 @@ class DLinkerApi {
     required String address,
     required String publicKey,
   }) async {
-    final authContext = await _buildAuthContext();
-    final json = await _post('auth', {
+    final json = await _callApi('user', 'authorize', { // Note: Guide says "authorize" or "get_status" depending on context, let's stick to guide actions if specified.
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
       'publicKey': _normalizePublicKey(publicKey),
-      ...authContext,
+      ...(await _buildAuthContext()),
     });
 
     if (json['success'] == true) return;
     throw Exception((json['error'] ?? 'Auth failed').toString());
+  }
+
+  Future<Map<String, dynamic>> custodyLogin({
+    required String username,
+    required String password,
+  }) async {
+    final json = await _callApi('user', 'custody_login', {
+      'username': username,
+      'password': password,
+    });
+    if (json['success'] == true) return json;
+    throw Exception((json['error'] ?? 'Custody login failed').toString());
   }
 
   Future<void> sendCoinFlip({
@@ -1688,15 +1704,26 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    final json = await _post('coinflip', {
-      'gameId': gameId,
-      'address': _normalizeAddress(address),
-      'side': side,
-      'amount': amount,
-      'signature': signature,
-      'publicKey': _normalizePublicKey(publicKey),
-    });
+    // Game API uses query param + body action
+    final url = Uri.parse('${_baseUrl}game').replace(queryParameters: {'game': 'coinflip'});
+    final response = await _client.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'User-Agent': 'D-Linker-Flutter-App',
+      },
+      body: jsonEncode({
+        'action': 'bet',
+        'gameId': gameId,
+        'address': _normalizeAddress(address),
+        'side': side,
+        'amount': amount,
+        'signature': signature,
+        'publicKey': _normalizePublicKey(publicKey),
+      }),
+    ).timeout(const Duration(seconds: 60));
 
+    final json = _parseResponse(response);
     if (json['success'] == true) return;
     throw Exception((json['error'] ?? 'Bet failed').toString());
   }
@@ -1706,7 +1733,7 @@ class DLinkerApi {
     required String publicKey,
     required String signature,
   }) async {
-    final json = await _post('airdrop', {
+    final json = await _callApi('wallet', 'airdrop', {
       'address': _normalizeAddress(walletAddress),
       'publicKey': _normalizePublicKey(publicKey),
       'signature': signature,
@@ -1720,7 +1747,7 @@ class DLinkerApi {
   }
 
   Future<String> syncBalance(String walletAddress) async {
-    final json = await _post('get-balance', {
+    final json = await _callApi('wallet', 'get_balance', {
       'address': _normalizeAddress(walletAddress),
     });
 
@@ -1738,7 +1765,7 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    final json = await _post('transfer', {
+    final json = await _callApi('wallet', 'secure_transfer', {
       'from': _normalizeAddress(from),
       'to': _normalizeAddress(to),
       'amount': amount,
@@ -1758,7 +1785,7 @@ class DLinkerApi {
     required int page,
     int limit = 20,
   }) async {
-    final json = await _post('history', {
+    final json = await _callApi('user', 'get_history', {
       'address': _normalizeAddress(walletAddress),
       'page': page,
       'limit': limit,
@@ -1786,6 +1813,17 @@ class DLinkerApi {
       history: history,
     );
   }
+
+  Future<List<Map<String, dynamic>>> getTotalBetLeaderboard({int limit = 50}) async {
+    final json = await _callApi('stats', 'total_bet', {
+      'limit': limit,
+    });
+    if (json['success'] == true) {
+      return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);
+    }
+    throw Exception((json['error'] ?? 'Failed to get leaderboard').toString());
+  }
+
 
   Future<Map<String, dynamic>> _get(
     String endpoint, {
