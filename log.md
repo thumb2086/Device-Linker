@@ -1,6 +1,15 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-07] API Update: Simplified Endpoint Contract Sync
+**執行內容 (API Integration):**
+- Flutter `DLinkerApi` 對齊新版簡化 API，持續使用 `/api/user`、`/api/wallet`、`/api/stats`、`/api/game`
+- `custodyLogin()` 補上 `platform`、`clientType`、`deviceId`、`appVersion`
+- 轉帳簽名與 `secure_transfer` 請求共用同一份標準化 `amount` 字串，避免 `10` / `10.0` 不一致
+- `net_worth` leaderboard 查詢補上 `limit` 參數
+- `README.md` 與 `flutter_app/README.md` 已更新為新版 6 個簡化端點說明
+
+---
 ## [2026-03-02] Docs: Scarlet Re-sign Install Guide
 **執行內容 (User Support):**
 - 新增 `scarlet-install-guide.md`，提供 iOS 使用者用 Scarlet 安裝 `flutter-ios-unsigned.ipa` 的完整流程。

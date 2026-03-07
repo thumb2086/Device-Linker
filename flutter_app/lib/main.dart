@@ -472,7 +472,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await _api.transfer(
           sessionId: _currentSessionId!,
           to: destinationAddress.trim().toLowerCase(),
-          amount: amount.trim(),
+          amount: normalizedAmount,
           signature: signature,
           publicKey: publicKey,
         );
@@ -1769,7 +1769,7 @@ class DLinkerApi {
     required String address,
     required String publicKey,
   }) async {
-    final json = await _callApi('user', 'authorize', { // Note: Guide says "authorize" or "get_status" depending on context, let's stick to guide actions if specified.
+    final json = await _callApi('user', 'authorize', {
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
       'publicKey': _normalizePublicKey(publicKey),
@@ -1787,6 +1787,7 @@ class DLinkerApi {
     final json = await _callApi('user', 'custody_login', {
       'username': username,
       'password': password,
+      ...(await _buildAuthContext()),
     });
     if (json['success'] == true) return json;
     throw Exception((json['error'] ?? 'Custody login failed').toString());
@@ -1801,8 +1802,12 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
+    final normalizedGameId = gameId.trim();
+    if (normalizedGameId.isEmpty) {
+      throw Exception('Missing gameId');
+    }
     final url = Uri.parse('${_baseUrl}game').replace(queryParameters: {
-      'game': 'coinflip',
+      'game': normalizedGameId,
       'sessionId': _normalizeSessionId(sessionId),
     });
     final response = await _client.post(
@@ -1817,7 +1822,7 @@ class DLinkerApi {
         'amount': amount,
         'sessionId': _normalizeSessionId(sessionId),
         'choice': side,
-        'gameId': gameId,
+        'gameId': normalizedGameId,
         'signature': signature,
         'publicKey': _normalizePublicKey(publicKey),
       }),
@@ -1940,9 +1945,11 @@ class DLinkerApi {
 
   Future<List<Map<String, dynamic>>> getNetWorthLeaderboard({
     required String sessionId,
+    int limit = 50,
   }) async {
     final json = await _callApi('stats', 'net_worth', {
       'sessionId': _normalizeSessionId(sessionId),
+      'limit': limit,
     });
     if (json['success'] == true) {
       return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);

@@ -37,10 +37,14 @@ flutter run
 
 ### 2) Backend API
 - Flutter 端預設呼叫 `https://device-linker-api.vercel.app/api/`
-- 授權流程:
-  - `POST /api/v3/auth/create` 建立 pending session（可帶 `ttlSeconds`，預設 600，範圍 60-3600）
-  - `POST /api/auth` 授權（支援 `platform` / `clientType` / `deviceId` / `appVersion`）
-  - `GET /api/auth?sessionId=...` 查詢授權狀態（pending 會回傳過期時間）
+- 簡化後端點:
+  - `POST /api/user`：`create_session`、`authorize`、`get_status`、`custody_login`、`get_history`
+  - `POST /api/wallet`：`get_balance`、`summary`、`secure_transfer`、`airdrop`
+  - `POST /api/stats`：`total_bet`、`net_worth`
+  - `POST /api/admin`
+  - `POST /api/game?game=<gameId>`
+  - `POST /api/market-sim`
+- 授權狀態可用 `POST /api/user` 搭配 `action=get_status` 查詢，也可相容使用 `GET /api/user?action=get_status&sessionId=...`
 
 ## 開發流程建議
 1. 先在 `flutter_app` 完成 UI 與簽名/交易流程。
