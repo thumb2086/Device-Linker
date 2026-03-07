@@ -176,6 +176,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _pendingAuthSessionId;
   BetRequest? _pendingBet;
   bool _isPromptOpen = false;
+  String? _currentSessionId;
 
   bool get _scannerSupported {
     if (kIsWeb) return true;
@@ -363,10 +364,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         final signature = await _keyService.signData(_walletAddress.trim().toLowerCase());
+
+        if (_currentSessionId == null) {
+          throw Exception('Please authenticate or login first');
+        }
+
         await _api.requestAirdrop(
-          walletAddress: _walletAddress.trim().toLowerCase(),
-          publicKey: pubKey,
-          signature: signature,
+          sessionId: _currentSessionId!,
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
@@ -464,8 +468,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
+        if (_currentSessionId == null) {
+          throw Exception('Please authenticate or login first');
+        }
+
         await _api.transfer(
-          from: _walletAddress.trim().toLowerCase(),
+          sessionId: _currentSessionId!,
           to: destinationAddress.trim().toLowerCase(),
           amount: amount.trim(),
           signature: signature,
@@ -849,6 +857,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendAuth(sessionId: sessionId, address: _walletAddress, publicKey: pubKey);
+        
+        setState(() {
+          _currentSessionId = sessionId;
+        });
+
         if (!mounted) return;
         _showSnack(T.of(context, 'auth_success_return'));
       } catch (e) {
@@ -892,7 +905,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
+        if (_currentSessionId == null) {
+          throw Exception('Please authenticate or login first');
+        }
+
         await _api.sendCoinFlip(
+          sessionId: _currentSessionId!,
           gameId: bet.gameId,
           address: _walletAddress,
           side: bet.side,
@@ -1778,6 +1796,7 @@ class DLinkerApi {
   }
 
   Future<void> sendCoinFlip({
+    required String sessionId,
     required String gameId,
     required String address,
     required String side,
@@ -1785,8 +1804,10 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    // Game API uses query param + body action
-    final url = Uri.parse('${_baseUrl}game').replace(queryParameters: {'game': 'coinflip'});
+    final url = Uri.parse('${_baseUrl}game').replace(queryParameters: {
+      'game': 'coinflip',
+      'sessionId': _normalizeSessionId(sessionId),
+    });
     final response = await _client.post(
       url,
       headers: {
@@ -1795,10 +1816,11 @@ class DLinkerApi {
       },
       body: jsonEncode({
         'action': 'bet',
-        'gameId': gameId,
         'address': _normalizeAddress(address),
-        'side': side,
         'amount': amount,
+        'sessionId': _normalizeSessionId(sessionId),
+        'side': side,
+        'gameId': gameId,
         'signature': signature,
         'publicKey': _normalizePublicKey(publicKey),
       }),
@@ -1810,14 +1832,10 @@ class DLinkerApi {
   }
 
   Future<String> requestAirdrop({
-    required String walletAddress,
-    required String publicKey,
-    required String signature,
+    required String sessionId,
   }) async {
     final json = await _callApi('wallet', 'airdrop', {
-      'address': _normalizeAddress(walletAddress),
-      'publicKey': _normalizePublicKey(publicKey),
-      'signature': signature,
+      'sessionId': _normalizeSessionId(sessionId),
     });
 
     if (json['success'] == true) {
@@ -1840,14 +1858,14 @@ class DLinkerApi {
   }
 
   Future<String> transfer({
-    required String from,
+    required String sessionId,
     required String to,
     required String amount,
     required String signature,
     required String publicKey,
   }) async {
     final json = await _callApi('wallet', 'secure_transfer', {
-      'from': _normalizeAddress(from),
+      'sessionId': _normalizeSessionId(sessionId),
       'to': _normalizeAddress(to),
       'amount': amount,
       'signature': signature,
@@ -1895,14 +1913,30 @@ class DLinkerApi {
     );
   }
 
-  Future<List<Map<String, dynamic>>> getTotalBetLeaderboard({int limit = 50}) async {
+  Future<List<Map<String, dynamic>>> getTotalBetLeaderboard({
+    required String sessionId,
+    int limit = 50,
+  }) async {
     final json = await _callApi('stats', 'total_bet', {
+      'sessionId': _normalizeSessionId(sessionId),
       'limit': limit,
     });
     if (json['success'] == true) {
       return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);
     }
     throw Exception((json['error'] ?? 'Failed to get leaderboard').toString());
+  }
+
+  Future<List<Map<String, dynamic>>> getNetWorthLeaderboard({
+    required String sessionId,
+  }) async {
+    final json = await _callApi('stats', 'net_worth', {
+      'sessionId': _normalizeSessionId(sessionId),
+    });
+    if (json['success'] == true) {
+      return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);
+    }
+    throw Exception((json['error'] ?? 'Failed to get net worth leaderboard').toString());
   }
 
 
