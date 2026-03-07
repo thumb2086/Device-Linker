@@ -1816,7 +1816,7 @@ class DLinkerApi {
         'address': _normalizeAddress(address),
         'amount': amount,
         'sessionId': _normalizeSessionId(sessionId),
-        'side': side,
+        'choice': side,
         'gameId': gameId,
         'signature': signature,
         'publicKey': _normalizePublicKey(publicKey),
@@ -1840,6 +1840,20 @@ class DLinkerApi {
     }
 
     throw Exception((json['error'] ?? 'Airdrop failed').toString());
+  }
+
+  Future<Map<String, dynamic>> getWalletSummary({
+    required String sessionId,
+  }) async {
+    final json = await _callApi('wallet', 'summary', {
+      'sessionId': _normalizeSessionId(sessionId),
+    });
+
+    if (json['success'] == true) {
+      return json;
+    }
+
+    throw Exception((json['error'] ?? 'Wallet summary failed').toString());
   }
 
   Future<String> syncBalance(String walletAddress) async {
