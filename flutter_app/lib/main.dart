@@ -52,8 +52,8 @@ extension AppLanguageTag on AppLanguage {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.initialize();
   runApp(const DeviceLinkerApp());
+  unawaited(NotificationService.instance.initialize());
 }
 
 class DeviceLinkerApp extends StatefulWidget {
@@ -162,7 +162,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GithubUpdateService _updateService = GithubUpdateService();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
+  StreamSubscription<String>? _deepLinkStringSubscription;
   Timer? _balanceTimer;
+  String? _lastHandledDeepLink;
+  DateTime? _lastHandledDeepLinkAt;
 
   String _walletAddress = '';
   String _balance = '0.00';
@@ -195,6 +198,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _deepLinkSubscription?.cancel();
+    _deepLinkStringSubscription?.cancel();
     _balanceTimer?.cancel();
     super.dispose();
   }
@@ -228,16 +232,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _setupDeepLinks() async {
     try {
       final links = AppLinks();
-      // Use dynamic call so app-links API version changes do not break compilation.
-      final dynamic initial = await (links as dynamic).getInitialLink();
-      await _handlePayload(initial?.toString());
+      final initial = await _resolveInitialDeepLink(links);
+      await _handleIncomingDeepLink(initial);
 
-      _deepLinkSubscription = links.uriLinkStream.listen((uri) {
-        _handlePayload(uri.toString());
-      });
+      _deepLinkSubscription = links.uriLinkStream.listen(
+        (uri) => _handleIncomingDeepLink(uri.toString()),
+        onError: (Object error) {
+          debugPrint('Deep link uri stream failed: $error');
+        },
+      );
+
+      _deepLinkStringSubscription = links.stringLinkStream.listen(
+        (raw) => _handleIncomingDeepLink(raw),
+        onError: (Object error) {
+          debugPrint('Deep link string stream failed: $error');
+        },
+      );
     } catch (e) {
       debugPrint('Deep link init failed: $e');
     }
+  }
+
+  Future<String?> _resolveInitialDeepLink(AppLinks links) async {
+    // Keep compatibility across app_links versions and desktop/mobile differences.
+    final dynamic any = links;
+    try {
+      final dynamic value = await any.getInitialLinkString();
+      final link = value?.toString().trim() ?? '';
+      if (link.isNotEmpty && link != 'null') return link;
+    } catch (e) {
+      debugPrint('Deep link getInitialLinkString unavailable: $e');
+    }
+
+    try {
+      final dynamic value = await any.getInitialLink();
+      final link = value?.toString().trim() ?? '';
+      if (link.isNotEmpty && link != 'null') return link;
+    } catch (e) {
+      debugPrint('Deep link getInitialLink unavailable: $e');
+    }
+
+    try {
+      final dynamic value = await any.getLatestLinkString();
+      final link = value?.toString().trim() ?? '';
+      if (link.isNotEmpty && link != 'null') return link;
+    } catch (e) {
+      debugPrint('Deep link getLatestLinkString unavailable: $e');
+    }
+
+    try {
+      final dynamic value = await any.getLatestLink();
+      final link = value?.toString().trim() ?? '';
+      if (link.isNotEmpty && link != 'null') return link;
+    } catch (e) {
+      debugPrint('Deep link getLatestLink unavailable: $e');
+    }
+
+    return null;
+  }
+
+  Future<void> _handleIncomingDeepLink(String? raw) async {
+    final data = raw?.trim() ?? '';
+    if (data.isEmpty || data == 'null') return;
+
+    final now = DateTime.now();
+    final isDuplicate = _lastHandledDeepLink == data &&
+        _lastHandledDeepLinkAt != null &&
+        now.difference(_lastHandledDeepLinkAt!) < const Duration(seconds: 2);
+    if (isDuplicate) return;
+
+    _lastHandledDeepLink = data;
+    _lastHandledDeepLinkAt = now;
+    await _handlePayload(data);
   }
 
   Future<void> _runWithLoading(Future<void> Function() task) async {
@@ -261,15 +327,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _isSyncingBalance = true;
 
     try {
+      final previousBalance = _lastKnownBalance;
       final nextBalance = await _api.syncBalance(_walletAddress);
       final next = double.tryParse(nextBalance) ?? 0.0;
-
-      if (notifyIfIncreased && next > _lastKnownBalance) {
-        await NotificationService.instance.showBalanceNotification(
-          amount: next - _lastKnownBalance,
-          total: next,
-        );
-      }
+      final shouldNotify = notifyIfIncreased && next > previousBalance;
 
       _lastKnownBalance = next;
       await AppStorage.setLastKnownBalance(nextBalance);
@@ -278,6 +339,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _balance = nextBalance;
       });
+
+      if (shouldNotify) {
+        try {
+          await NotificationService.instance.showBalanceNotification(
+            amount: next - previousBalance,
+            total: next,
+          );
+        } catch (e) {
+          debugPrint('Balance notification failed: $e');
+        }
+      }
     } catch (e) {
       debugPrint('Balance sync failed: $e');
     } finally {
@@ -830,6 +902,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await _syncBalance();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -2227,19 +2301,34 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const darwin = DarwinInitializationSettings();
-    const settings = InitializationSettings(
-      android: android,
-      iOS: darwin,
-      macOS: darwin,
-    );
+    try {
+      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const darwin = DarwinInitializationSettings();
+      const settings = InitializationSettings(
+        android: android,
+        iOS: darwin,
+        macOS: darwin,
+      );
 
-    await _plugin.initialize(settings);
-    _initialized = true;
+      await _plugin.initialize(settings);
+      _initialized = true;
+    } catch (e) {
+      debugPrint('Notification initialize skipped: $e');
+    }
   }
 
   Future<void> requestPermissions() async {
+    if (kIsWeb) return;
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        break;
+      default:
+        return;
+    }
+
     await initialize();
 
     await _plugin
@@ -2256,6 +2345,16 @@ class NotificationService {
   }
 
   Future<void> showBalanceNotification({required double amount, required double total}) async {
+    if (kIsWeb) return;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        break;
+      default:
+        return;
+    }
+
     await initialize();
 
     const android = AndroidNotificationDetails(

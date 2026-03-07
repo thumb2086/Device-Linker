@@ -1,6 +1,37 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-02] Docs: Scarlet Re-sign Install Guide
+**執行內容 (User Support):**
+- 新增 `scarlet-install-guide.md`，提供 iOS 使用者用 Scarlet 安裝 `flutter-ios-unsigned.ipa` 的完整流程。
+- 補充首次開啟失敗處理與常見問題（憑證信任、憑證失效重簽、重簽後需重新登入）。
+- 新增客服可直接複製的快速回覆內容，降低安裝支援成本。
+
+---
+## [2026-03-02] CI Update: iOS Unsigned IPA Artifact for Re-sign Flow
+**執行內容 (Release Pipeline):**
+- 調整 `.github/workflows/flutter-multiplatform-build.yml` iOS 產物由 `flutter-ios.zip` 改為 `flutter-ios-unsigned.ipa`。
+- iOS 打包流程改為建立 `Payload/Runner.app` 再壓成 `.ipa`，可直接提供重簽工具使用。
+- 文件同步：
+  - `README.md` 新增 CI iOS unsigned IPA 說明
+  - `flutter_app/README.md` 新增 iOS 產物用途說明（需重簽/簽名）
+- `todo.md` 勾選「CI 輸出 iOS unsigned .ipa」完成項目。
+
+---
+## [2026-03-02] iOS Build Bootstrap: Platform Shell + Device Install Guidance
+**執行內容 (Build Reliability):**
+- **根因確認**: `flutter_app/ios` 未提交，導致本地無法直接執行 iOS 編譯與安裝流程。
+- **腳本補齊**: 新增 `flutter_app/scripts/bootstrap_ios.sh`，提供 iOS 一鍵初始化：
+  - 檢查 `flutter` 是否可用
+  - 限制 iOS build 需在 macOS 執行
+  - 執行 `flutter create` 生成 `ios/`
+  - 執行 `flutter pub get` 與 `flutter build ios --release --no-codesign`
+- **文件同步**:
+  - `flutter_app/README.md` 新增 iOS 章節（生成平台殼層與實機安裝說明）
+  - `README.md` 新增 iOS 實機安裝注意（需 Xcode 簽名並匯出 `.ipa`）
+- **待辦更新**: `todo.md` 新增「建立 iOS 簽名與 `.ipa` 匯出流程」項目，作為可安裝實機版本的下一步。
+
+---
 ## [2026-02-26] Auth API Alignment: Multi-Platform Session Metadata + Validation
 **執行內容 (API Contract Sync):**
 - **授權參數升級**: Flutter `DLinkerApi.sendAuth` 新增送出 `platform`、`clientType`、`deviceId`、`appVersion`，對齊後台多平台授權規格。
