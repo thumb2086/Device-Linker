@@ -18,6 +18,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
 
+import 'update_service.dart';
+
 enum AppLanguage { system, zhTw, zhCn, en }
 
 extension AppLanguageTag on AppLanguage {
@@ -157,6 +159,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
+  final GithubUpdateService _updateService = GithubUpdateService();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
   Timer? _balanceTimer;
@@ -216,6 +219,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     await _setupDeepLinks();
+
+    if (mounted) {
+      unawaited(_updateService.checkForUpdates(context));
+    }
   }
 
   Future<void> _setupDeepLinks() async {
@@ -1825,25 +1832,7 @@ class DLinkerApi {
   }
 
 
-  Future<Map<String, dynamic>> _get(
-    String endpoint, {
-    Map<String, String>? queryParameters,
-  }) async {
-    final uri = Uri.parse('$_baseUrl$endpoint');
-    final url = queryParameters == null ? uri : uri.replace(queryParameters: queryParameters);
 
-    final response = await _client
-        .get(
-          url,
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'D-Linker-Flutter-App',
-          },
-        )
-        .timeout(const Duration(seconds: 60));
-
-    return _parseResponse(response);
-  }
 
   Future<Map<String, dynamic>> _post(String endpoint, Map<String, dynamic> body) async {
     final url = Uri.parse('$_baseUrl$endpoint');
@@ -2418,6 +2407,10 @@ class T {
       'add_contact': 'Add Contact',
       'contact_name': 'Name',
       'wallet_address': 'Wallet Address',
+      'update_available': 'Update Available',
+      'update_desc': 'A new version ({1}) is available. Would you like to download it now?',
+      'update_later': 'Later',
+      'update_now': 'Update Now',
     },
     'zh_TW': {
       'token_symbol': '子熙幣',
@@ -2476,6 +2469,10 @@ class T {
       'add_contact': '新增聯絡人',
       'contact_name': '姓名',
       'wallet_address': '錢包地址',
+      'update_available': '有新版本可用',
+      'update_desc': '發現新版本 ({1})。您要現在下載嗎？',
+      'update_later': '稍後',
+      'update_now': '立即更新',
     },
     'zh_CN': {
       'token_symbol': '子熙币',
@@ -2533,7 +2530,11 @@ class T {
       'no_contacts': '目前尚无联系人',
       'add_contact': '新增联系人',
       'contact_name': '姓名',
-      'wallet_address': '钱包地址',
+      'wallet_address': '錢包地址',
+      'update_available': '有新版本可用',
+      'update_desc': '发现新版本 ({1})。您要现在下载吗？',
+      'update_later': '稍后',
+      'update_now': '立即更新',
     },
   };
 
