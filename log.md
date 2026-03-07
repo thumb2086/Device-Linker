@@ -1,6 +1,13 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-07] CI Update: Cache Android SDK CMake for Release Build
+**執行內容 (Build Performance):**
+- `.github/workflows/flutter-multiplatform-build.yml` 新增 Android SDK path 解析步驟
+- 針對 `cmake/3.22.1` 與 Android licenses 增加 GitHub Actions cache
+- 目標是避免 Android release job 在 GitHub-hosted runner 上每次都重新安裝 CMake 3.22.1
+
+---
 ## [2026-03-07] API Update: Simplified Endpoint Contract Sync
 **執行內容 (API Integration):**
 - Flutter `DLinkerApi` 對齊新版簡化 API，持續使用 `/api/user`、`/api/wallet`、`/api/stats`、`/api/game`

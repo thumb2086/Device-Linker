@@ -62,6 +62,24 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Resolve Android SDK path
+        if: matrix.platform == 'android'
+        id: android-sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "sdk_root=${SDK_ROOT}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Android SDK CMake
+        if: matrix.platform == 'android'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.android-sdk.outputs.sdk_root }}/cmake/3.22.1
+            ${{ steps.android-sdk.outputs.sdk_root }}/licenses
+          key: ${{ runner.os }}-android-sdk-cmake-3.22.1
+
       - name: Install Linux desktop dependencies
         if: matrix.platform == 'linux'
         run: |
