@@ -362,9 +362,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_walletAddress.isEmpty) return;
     await _runWithLoading(() async {
       try {
-        final pubKey = await _keyService.getPublicKeySpkiBase64();
-        final signature = await _keyService.signData(_walletAddress.trim().toLowerCase());
-
         if (_currentSessionId == null) {
           throw Exception('Please authenticate or login first');
         }
