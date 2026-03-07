@@ -146,6 +146,20 @@ jobs:
             fi
           fi
 
+      - name: Disable Gradle file system watching for Android CI
+        if: matrix.platform == 'android'
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle_props="android/gradle.properties"
+          touch "${gradle_props}"
+
+          if ! grep -q '^org\.gradle\.vfs\.watch=false$' "${gradle_props}"; then
+            printf '\norg.gradle.vfs.watch=false\n' >> "${gradle_props}"
+          fi
+
       - name: Configure Android release signing
         if: matrix.platform == 'android'
         working-directory: flutter_app

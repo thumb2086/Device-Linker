@@ -9,6 +9,8 @@ class GithubUpdateService {
   static const String _owner = 'thumb2086';
   static const String _repo = 'Device-Linker';
   static const String _apiUrl = 'https://api.github.com/repos/$_owner/$_repo/releases/latest';
+  static const String _releasesUrl = 'https://github.com/$_owner/$_repo/releases';
+  static const String _latestReleaseUrl = '$_releasesUrl/latest';
 
   Future<void> checkForUpdates(BuildContext context) async {
     try {
@@ -17,7 +19,8 @@ class GithubUpdateService {
 
       final data = jsonDecode(response.body);
       final String latestTagName = data['tag_name'] ?? ''; // e.g., "v1.5.0"
-      final String htmlUrl = data['html_url'] ?? '';
+      final String htmlUrl = (data['html_url'] ?? '').toString().trim();
+      final String releaseUrl = htmlUrl.isNotEmpty ? htmlUrl : _latestReleaseUrl;
 
       if (latestTagName.isEmpty) return;
 
@@ -26,7 +29,7 @@ class GithubUpdateService {
 
       if (_isUpdateAvailable(currentVersion, latestTagName)) {
         if (!context.mounted) return;
-        _showUpdateDialog(context, latestTagName, htmlUrl);
+        _showUpdateDialog(context, latestTagName, releaseUrl);
       }
     } catch (e) {
       debugPrint('Update check failed: $e');
@@ -62,26 +65,56 @@ class GithubUpdateService {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text(T.of(context, 'update_available')),
         content: Text(T.of(context, 'update_desc', [version])),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: Text(T.of(context, 'update_later')),
           ),
           FilledButton(
             onPressed: () async {
-              final uri = Uri.parse(url);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
-              if (context.mounted) Navigator.pop(context);
+              Navigator.pop(dialogContext);
+              await _openUpdatePage(context, url);
             },
             child: Text(T.of(context, 'update_now')),
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openUpdatePage(BuildContext context, String url) async {
+    final candidates = <Uri>[
+      Uri.parse(url),
+      Uri.parse(_latestReleaseUrl),
+      Uri.parse(_releasesUrl),
+    ];
+
+    for (final uri in candidates) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          return;
+        }
+      } catch (e) {
+        debugPrint('External update launch failed for $uri: $e');
+      }
+    }
+
+    for (final uri in candidates) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.platformDefault)) {
+          return;
+        }
+      } catch (e) {
+        debugPrint('Fallback update launch failed for $uri: $e');
+      }
+    }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(T.of(context, 'failure_message', ['Unable to open update page']))),
     );
   }
 }

@@ -1,11 +1,24 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-07] Update UX Fix: Open GitHub Releases Reliably on Mobile
+**執行內容 (Update Flow):**
+- `GithubUpdateService` 的「立即更新」改為直接打開 GitHub Releases 頁面，不再依賴單一 `canLaunchUrl()` 判斷
+- 若 API 回傳的 `html_url` 為空，會 fallback 到 `/releases/latest`，再 fallback 到 `/releases`
+- 針對手機端加入多重 `launchUrl` 模式嘗試，避免按下「立即更新」沒有跳頁
+
+---
 ## [2026-03-07] CI Update: Cache Android SDK CMake for Release Build
 **執行內容 (Build Performance):**
 - `.github/workflows/flutter-multiplatform-build.yml` 新增 Android SDK path 解析步驟
 - 針對 `cmake/3.22.1` 與 Android licenses 增加 GitHub Actions cache
 - 目標是避免 Android release job 在 GitHub-hosted runner 上每次都重新安裝 CMake 3.22.1
+
+---
+## [2026-03-07] CI Fix: Disable Gradle File Watching for Android Release Job
+**執行內容 (Build Stability):**
+- Android release workflow 在 `flutter create` 後會對生成的 `android/gradle.properties` 補上 `org.gradle.vfs.watch=false`
+- 目標是避免 GitHub Actions / Linux runner 上出現 `Caught exception: Already watching path: .../flutter_app/android`
 
 ---
 ## [2026-03-07] API Update: Simplified Endpoint Contract Sync
