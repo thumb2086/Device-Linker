@@ -37,6 +37,7 @@ flutter run
 
 ### 2) Backend API
 - Flutter 端預設呼叫 `https://device-linker-api.vercel.app/api/`
+- API 規格文件：`device-linker-api-integration.md`
 - 授權流程:
   - `POST /api/v3/auth/create` 建立 pending session（可帶 `ttlSeconds`，預設 600，範圍 60-3600）
   - `POST /api/auth` 授權（支援 `platform` / `clientType` / `deviceId` / `appVersion`）

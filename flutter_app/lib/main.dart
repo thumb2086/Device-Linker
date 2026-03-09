@@ -172,6 +172,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _lastKnownBalance = 0.0;
   bool _isLoading = false;
   bool _isSyncingBalance = false;
+  String _activeSessionId = '';
 
   String? _pendingAuthSessionId;
   BetRequest? _pendingBet;
@@ -209,11 +210,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _keyService.ensureKeyPair();
     final address = await _keyService.getWalletAddress();
     final lastBalance = await AppStorage.getLastKnownBalance();
+    final activeSessionId = await AppStorage.getActiveSessionId();
 
     if (!mounted) return;
     setState(() {
       _walletAddress = address;
       _lastKnownBalance = lastBalance;
+      _activeSessionId = activeSessionId;
     });
 
     await _syncBalance(notifyIfIncreased: false);
@@ -355,14 +358,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _requestAirdrop() async {
     if (_walletAddress.isEmpty) return;
+    if (_activeSessionId.isEmpty) {
+      _showSnack(T.of(context, 'session_required'));
+      return;
+    }
     await _runWithLoading(() async {
       try {
-        final pubKey = await _keyService.getPublicKeySpkiBase64();
-        final signature = await _keyService.signData(_walletAddress.trim().toLowerCase());
         await _api.requestAirdrop(
-          walletAddress: _walletAddress.trim().toLowerCase(),
-          publicKey: pubKey,
-          signature: signature,
+          sessionId: _activeSessionId,
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
@@ -459,6 +462,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     if (!mounted || amount == null || amount.trim().isEmpty) return;
+    if (_activeSessionId.isEmpty) {
+      _showSnack(T.of(context, 'session_required'));
+      return;
+    }
 
     await _runWithLoading(() async {
       try {
@@ -472,7 +479,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
         await _api.transfer(
-          from: _walletAddress.trim().toLowerCase(),
+          sessionId: _activeSessionId,
           to: destinationAddress.trim().toLowerCase(),
           amount: amount.trim(),
           signature: signature,
@@ -856,6 +863,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendAuth(sessionId: sessionId, address: _walletAddress, publicKey: pubKey);
+        _activeSessionId = sessionId;
+        await AppStorage.setActiveSessionId(sessionId);
         if (!mounted) return;
         _showSnack(T.of(context, 'auth_success_return'));
       } catch (e) {
@@ -897,11 +906,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
+        if (_activeSessionId.isEmpty) {
+          throw Exception(T.of(context, 'session_required'));
+        }
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendCoinFlip(
           gameId: bet.gameId,
           address: _walletAddress,
+          sessionId: _activeSessionId,
           side: bet.side,
           amount: bet.amount,
           signature: signature,
@@ -1745,14 +1758,16 @@ class DLinkerApi {
     }
 
     final authContext = await _buildAuthContext();
-    return _post('v3/auth/create', {
+    return _post('user', {
+      'action': 'create_session',
       'ttlSeconds': ttlSeconds,
       ...authContext,
     });
   }
 
   Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
-    return _get('auth', queryParameters: {
+    return _get('user', queryParameters: {
+      'action': 'get_status',
       'sessionId': _normalizeSessionId(sessionId),
     });
   }
@@ -1763,7 +1778,8 @@ class DLinkerApi {
     required String publicKey,
   }) async {
     final authContext = await _buildAuthContext();
-    final json = await _post('auth', {
+    final json = await _post('user', {
+      'action': 'authorize',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
       'publicKey': _normalizePublicKey(publicKey),
@@ -1777,16 +1793,21 @@ class DLinkerApi {
   Future<void> sendCoinFlip({
     required String gameId,
     required String address,
+    required String sessionId,
     required String side,
     required String amount,
     required String signature,
     required String publicKey,
   }) async {
-    final json = await _post('coinflip', {
+    final normalizedSessionId = _normalizeSessionId(sessionId);
+    final normalizedGameId = gameId.trim().toLowerCase();
+    final json = await _post('game?game=$normalizedGameId&sessionId=$normalizedSessionId', {
+      'action': 'bet',
       'gameId': gameId,
       'address': _normalizeAddress(address),
-      'side': side,
+      'choice': side,
       'amount': amount,
+      'sessionId': normalizedSessionId,
       'signature': signature,
       'publicKey': _normalizePublicKey(publicKey),
     });
@@ -1796,14 +1817,11 @@ class DLinkerApi {
   }
 
   Future<String> requestAirdrop({
-    required String walletAddress,
-    required String publicKey,
-    required String signature,
+    required String sessionId,
   }) async {
-    final json = await _post('airdrop', {
-      'address': _normalizeAddress(walletAddress),
-      'publicKey': _normalizePublicKey(publicKey),
-      'signature': signature,
+    final json = await _post('wallet', {
+      'action': 'airdrop',
+      'sessionId': _normalizeSessionId(sessionId),
     });
 
     if (json['success'] == true) {
@@ -1814,7 +1832,8 @@ class DLinkerApi {
   }
 
   Future<String> syncBalance(String walletAddress) async {
-    final json = await _post('get-balance', {
+    final json = await _post('wallet', {
+      'action': 'get_balance',
       'address': _normalizeAddress(walletAddress),
     });
 
@@ -1826,14 +1845,15 @@ class DLinkerApi {
   }
 
   Future<String> transfer({
-    required String from,
+    required String sessionId,
     required String to,
     required String amount,
     required String signature,
     required String publicKey,
   }) async {
-    final json = await _post('transfer', {
-      'from': _normalizeAddress(from),
+    final json = await _post('wallet', {
+      'action': 'secure_transfer',
+      'sessionId': _normalizeSessionId(sessionId),
       'to': _normalizeAddress(to),
       'amount': amount,
       'signature': signature,
@@ -1852,7 +1872,8 @@ class DLinkerApi {
     required int page,
     int limit = 20,
   }) async {
-    final json = await _post('history', {
+    final json = await _post('user', {
+      'action': 'get_history',
       'address': _normalizeAddress(walletAddress),
       'page': page,
       'limit': limit,
@@ -2377,6 +2398,7 @@ class AppStorage {
   static const String _languageKey = 'app_language';
   static const String _lastBalanceKey = 'last_known_balance';
   static const String _deviceIdKey = 'device_id';
+  static const String _activeSessionIdKey = 'active_session_id';
 
   static Future<AppLanguage> getLanguage() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2411,6 +2433,21 @@ class AppStorage {
 
     await prefs.setString(_deviceIdKey, generated);
     return generated;
+  }
+
+  static Future<String> getActiveSessionId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_activeSessionIdKey) ?? '';
+  }
+
+  static Future<void> setActiveSessionId(String sessionId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeSessionIdKey, sessionId.trim());
+  }
+
+  static Future<void> clearActiveSessionId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_activeSessionIdKey);
   }
 }
 
@@ -2456,6 +2493,7 @@ class T {
       'request_test_coins': 'Get Test Coins ({1})',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'session_required': 'Please complete Wallet Auth first',
       'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
       'address_placeholder': '0x...',
@@ -2517,6 +2555,7 @@ class T {
       'request_test_coins': '領取測試幣（{1}）',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'session_required': '請先完成錢包授權',
       'casino': '賭場',
       'manual_address_input': '手動輸入地址',
       'address_placeholder': '0x...',
@@ -2576,6 +2615,7 @@ class T {
       'request_test_coins': '领取测试币（{1}）',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'session_required': '请先完成钱包授权',
       'casino': '赌场',
       'manual_address_input': '手动输入地址',
       'address_placeholder': '0x...',
