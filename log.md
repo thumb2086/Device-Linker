@@ -1,6 +1,14 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-09] Release v2.0.3: Dynamic Airdrop Copy + Casino Shortcut
+**執行內容 (App Update):**
+- Flutter 版本號更新為 `2.0.3+1`（對應 release tag `v2.0.3`）。
+- 首頁「測試幣」按鈕文案移除固定 `100`，改為動態描述，避免與新版後端規則不一致。
+- 新增首頁「賭場」入口卡片，直通 `https://device-linker-api.vercel.app/`。
+- 新增 `url_launcher` 相依以支援外部網址啟動。
+
+---
 ## [2026-03-02] CI Performance Fix: Disable Gradle VFS Watch on Android
 **執行內容 (Build Speed/Stability):**
 - 在 `.github/workflows/flutter-multiplatform-build.yml` 的 Android 流程中，於 `flutter pub get` 後新增：

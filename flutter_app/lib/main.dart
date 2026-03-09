@@ -15,6 +15,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pointycastle/export.dart' hide Padding, State;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
 
@@ -154,6 +155,8 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  static final Uri _casinoUri = Uri.parse('https://device-linker-api.vercel.app/');
+
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
@@ -391,6 +394,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openCasino() async {
+    try {
+      final launched = await launchUrl(_casinoUri);
+      if (launched) return;
+      throw Exception('Unable to open casino');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(T.of(context, 'failure_message', [e.toString()]));
+    }
   }
 
   Future<String?> _pickAddressFromContacts() async {
@@ -988,6 +1002,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             title: T.of(context, 'transaction_history'),
                             icon: Icons.history,
                             onTap: _openHistory,
+                          ),
+                          const SizedBox(height: 12),
+                          NavigationCard(
+                            title: T.of(context, 'casino'),
+                            icon: Icons.casino,
+                            onTap: _openCasino,
                           ),
                           const SizedBox(height: 12),
                           NavigationCard(
@@ -2433,9 +2453,10 @@ class T {
       'scan': 'Scan',
       'transfer': 'Transfer',
       'migration': 'Device Migration',
-      'request_test_coins': 'Get 100 {1} Test Coins',
+      'request_test_coins': 'Get Test Coins ({1})',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
       'address_placeholder': '0x...',
       'cancel': 'Cancel',
@@ -2493,9 +2514,10 @@ class T {
       'scan': '掃描',
       'transfer': '轉帳',
       'migration': '設備轉移',
-      'request_test_coins': '領取 100 {1} 測試幣',
+      'request_test_coins': '領取測試幣（{1}）',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'casino': '賭場',
       'manual_address_input': '手動輸入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',
@@ -2551,9 +2573,10 @@ class T {
       'scan': '扫描',
       'transfer': '转账',
       'migration': '设备转移',
-      'request_test_coins': '领取 100 {1} 测试币',
+      'request_test_coins': '领取测试币（{1}）',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'casino': '赌场',
       'manual_address_input': '手动输入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',

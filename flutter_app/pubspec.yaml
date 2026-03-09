@@ -1,7 +1,7 @@
 name: device_linker_flutter
 description: Flutter multi-platform app for Device-Linker migration.
 publish_to: 'none'
-version: 2.0.1-alpha+1
+version: 2.0.3+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -22,6 +22,7 @@ dependencies:
   pointycastle: ^3.9.1
   package_info_plus: ^8.1.3
   web3dart: ^2.7.3
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
