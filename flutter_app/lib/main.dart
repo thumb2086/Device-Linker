@@ -931,7 +931,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await AppStorage.clearActiveSessionId();
     }
     if (_walletAddress.isEmpty) {
-      throw Exception(T.of(context, 'session_required'));
+      throw Exception('Session required');
     }
 
     final created = await _api.createPendingAuthSession();
