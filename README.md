@@ -1,4 +1,4 @@
-# Device-Linker
+拿掉# Device-Linker
 
 Device-Linker 是一個以 Flutter 為核心的多平台錢包應用專案，搭配 REST 後台 API 與 EVM 鏈上合約，提供裝置導向的地址管理、授權、簽名與轉帳流程。
 
