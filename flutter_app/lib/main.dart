@@ -175,6 +175,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isLoading = false;
   bool _isSyncingBalance = false;
   String _activeSessionId = '';
+  bool _autoUpdateCheckEnabled = true;
 
   String? _pendingAuthSessionId;
   BetRequest? _pendingBet;
@@ -213,12 +214,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final address = await _keyService.getWalletAddress();
     final lastBalance = await AppStorage.getLastKnownBalance();
     final activeSessionId = await AppStorage.getActiveSessionId();
+    final autoUpdateCheckEnabled = await AppStorage.getAutoUpdateCheckEnabled();
 
     if (!mounted) return;
     setState(() {
       _walletAddress = address;
       _lastKnownBalance = lastBalance;
       _activeSessionId = activeSessionId;
+      _autoUpdateCheckEnabled = autoUpdateCheckEnabled;
     });
 
     await _syncBalance(notifyIfIncreased: false);
@@ -232,6 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _scheduleUpdateCheck() {
+    if (!_autoUpdateCheckEnabled) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(
@@ -671,18 +675,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _openSettingsDialog() async {
+    bool autoUpdateEnabled = _autoUpdateCheckEnabled;
+
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(T.of(context, 'settings')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _languageTile(AppLanguage.system, T.of(context, 'lang_auto')),
-            _languageTile(AppLanguage.zhTw, T.of(context, 'lang_zh_tw')),
-            _languageTile(AppLanguage.zhCn, T.of(context, 'lang_zh_cn')),
-            _languageTile(AppLanguage.en, T.of(context, 'lang_en')),
-          ],
+        content: StatefulBuilder(
+          builder: (dialogContext, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(T.of(context, 'auto_update_check')),
+                value: autoUpdateEnabled,
+                onChanged: (enabled) async {
+                  setDialogState(() {
+                    autoUpdateEnabled = enabled;
+                  });
+                  await AppStorage.setAutoUpdateCheckEnabled(enabled);
+                  if (!mounted) return;
+                  setState(() {
+                    _autoUpdateCheckEnabled = enabled;
+                  });
+                },
+              ),
+              _languageTile(AppLanguage.system, T.of(context, 'lang_auto')),
+              _languageTile(AppLanguage.zhTw, T.of(context, 'lang_zh_tw')),
+              _languageTile(AppLanguage.zhCn, T.of(context, 'lang_zh_cn')),
+              _languageTile(AppLanguage.en, T.of(context, 'lang_en')),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -2439,6 +2462,7 @@ class AppStorage {
   static const String _lastBalanceKey = 'last_known_balance';
   static const String _deviceIdKey = 'device_id';
   static const String _activeSessionIdKey = 'active_session_id';
+  static const String _autoUpdateCheckEnabledKey = 'auto_update_check_enabled';
 
   static Future<AppLanguage> getLanguage() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2489,6 +2513,16 @@ class AppStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_activeSessionIdKey);
   }
+
+  static Future<bool> getAutoUpdateCheckEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoUpdateCheckEnabledKey) ?? true;
+  }
+
+  static Future<void> setAutoUpdateCheckEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoUpdateCheckEnabledKey, enabled);
+  }
 }
 
 class BetRequest {
@@ -2538,6 +2572,7 @@ class T {
       'update_later': 'Later',
       'update_now': 'Update Now',
       'update_open_failed': 'Unable to open update page',
+      'auto_update_check': 'Auto Check Updates',
       'session_required': 'Please complete Wallet Auth first',
       'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
@@ -2605,6 +2640,7 @@ class T {
       'update_later': '稍後',
       'update_now': '立即更新',
       'update_open_failed': '無法開啟更新頁面',
+      'auto_update_check': '自動檢查更新',
       'session_required': '請先完成錢包授權',
       'casino': '賭場',
       'manual_address_input': '手動輸入地址',
@@ -2670,6 +2706,7 @@ class T {
       'update_later': '稍后',
       'update_now': '立即更新',
       'update_open_failed': '无法打开更新页面',
+      'auto_update_check': '自动检查更新',
       'session_required': '请先完成钱包授权',
       'casino': '赌场',
       'manual_address_input': '手动输入地址',

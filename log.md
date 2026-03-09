@@ -1,6 +1,14 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-09] Release v2.1.6: Auto Update Check Toggle
+**執行內容 (Settings):**
+- Flutter 版本號更新為 `2.1.6+1`（對應 release tag `v2.1.6`）。
+- 設定頁新增「自動檢查更新」開關（預設開啟）。
+- 開關狀態持久化儲存到本機，下次啟動沿用。
+- 啟動時僅在開關啟用時執行自動更新檢查。
+
+---
 ## [2026-03-09] Release v2.1.4: Auto Session for Hardware Wallet Actions
 **執行內容 (Flow Fix):**
 - Flutter 版本號更新為 `2.1.4+1`（對應 release tag `v2.1.4`）。
