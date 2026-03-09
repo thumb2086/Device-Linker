@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
+import 'update_service.dart';
 
 enum AppLanguage { system, zhTw, zhCn, en }
 
@@ -160,6 +161,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
+  final GithubUpdateService _updateService = GithubUpdateService();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
   StreamSubscription<String>? _deepLinkStringSubscription;
@@ -226,6 +228,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     await _setupDeepLinks();
+    _scheduleUpdateCheck();
+  }
+
+  void _scheduleUpdateCheck() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        _updateService.checkForUpdates(
+          context,
+          title: T.of(context, 'update_available'),
+          descriptionTemplate: T.of(context, 'update_desc'),
+          laterLabel: T.of(context, 'update_later'),
+          nowLabel: T.of(context, 'update_now'),
+          openFailedMessage: T.of(context, 'update_open_failed'),
+        ),
+      );
+    });
   }
 
   Future<void> _setupDeepLinks() async {
@@ -2514,6 +2533,11 @@ class T {
       'request_test_coins': 'Get Test Coins ({1})',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'update_available': 'Update Available',
+      'update_desc': 'A new version ({1}) is available.',
+      'update_later': 'Later',
+      'update_now': 'Update Now',
+      'update_open_failed': 'Unable to open update page',
       'session_required': 'Please complete Wallet Auth first',
       'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
@@ -2576,6 +2600,11 @@ class T {
       'request_test_coins': '領取測試幣（{1}）',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'update_available': '有新版本可更新',
+      'update_desc': '偵測到新版本（{1}），請更新。',
+      'update_later': '稍後',
+      'update_now': '立即更新',
+      'update_open_failed': '無法開啟更新頁面',
       'session_required': '請先完成錢包授權',
       'casino': '賭場',
       'manual_address_input': '手動輸入地址',
@@ -2636,6 +2665,11 @@ class T {
       'request_test_coins': '领取测试币（{1}）',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'update_available': '有新版本可更新',
+      'update_desc': '检测到新版本（{1}），请更新。',
+      'update_later': '稍后',
+      'update_now': '立即更新',
+      'update_open_failed': '无法打开更新页面',
       'session_required': '请先完成钱包授权',
       'casino': '赌场',
       'manual_address_input': '手动输入地址',

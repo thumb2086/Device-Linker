@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'main.dart'; // To access T class
 
 class GithubUpdateService {
   static const String _owner = 'thumb2086';
@@ -12,7 +11,14 @@ class GithubUpdateService {
   static const String _releasesUrl = 'https://github.com/$_owner/$_repo/releases';
   static const String _latestReleaseUrl = '$_releasesUrl/latest';
 
-  Future<void> checkForUpdates(BuildContext context) async {
+  Future<void> checkForUpdates(
+    BuildContext context, {
+    required String title,
+    required String descriptionTemplate,
+    required String laterLabel,
+    required String nowLabel,
+    required String openFailedMessage,
+  }) async {
     try {
       final response = await http.get(Uri.parse(_apiUrl));
       if (response.statusCode != 200) return;
@@ -29,7 +35,16 @@ class GithubUpdateService {
 
       if (_isUpdateAvailable(currentVersion, latestTagName)) {
         if (!context.mounted) return;
-        _showUpdateDialog(context, latestTagName, releaseUrl);
+        final description = descriptionTemplate.replaceAll('{1}', latestTagName);
+        _showUpdateDialog(
+          context,
+          title: title,
+          description: description,
+          laterLabel: laterLabel,
+          nowLabel: nowLabel,
+          url: releaseUrl,
+          openFailedMessage: openFailedMessage,
+        );
       }
     } catch (e) {
       debugPrint('Update check failed: $e');
@@ -61,31 +76,43 @@ class GithubUpdateService {
     return false;
   }
 
-  void _showUpdateDialog(BuildContext context, String version, String url) {
+  void _showUpdateDialog(
+    BuildContext context, {
+    required String title,
+    required String description,
+    required String laterLabel,
+    required String nowLabel,
+    required String url,
+    required String openFailedMessage,
+  }) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: Text(T.of(context, 'update_available')),
-        content: Text(T.of(context, 'update_desc', [version])),
+        title: Text(title),
+        content: Text(description),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: Text(T.of(context, 'update_later')),
+            child: Text(laterLabel),
           ),
           FilledButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
-              await _openUpdatePage(context, url);
+              await _openUpdatePage(context, url, openFailedMessage);
             },
-            child: Text(T.of(context, 'update_now')),
+            child: Text(nowLabel),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _openUpdatePage(BuildContext context, String url) async {
+  Future<void> _openUpdatePage(
+    BuildContext context,
+    String url,
+    String openFailedMessage,
+  ) async {
     final candidates = <Uri>[
       Uri.parse(url),
       Uri.parse(_latestReleaseUrl),
@@ -114,7 +141,7 @@ class GithubUpdateService {
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(T.of(context, 'failure_message', ['Unable to open update page']))),
+      SnackBar(content: Text(openFailedMessage)),
     );
   }
 }
