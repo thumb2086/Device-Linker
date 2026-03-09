@@ -358,14 +358,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _requestAirdrop() async {
     if (_walletAddress.isEmpty) return;
-    if (_activeSessionId.isEmpty) {
-      _showSnack(T.of(context, 'session_required'));
-      return;
-    }
     await _runWithLoading(() async {
       try {
+        final sessionId = await _ensureActiveSessionId();
         await _api.requestAirdrop(
-          sessionId: _activeSessionId,
+          sessionId: sessionId,
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
@@ -462,13 +459,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     if (!mounted || amount == null || amount.trim().isEmpty) return;
-    if (_activeSessionId.isEmpty) {
-      _showSnack(T.of(context, 'session_required'));
-      return;
-    }
 
     await _runWithLoading(() async {
       try {
+        final sessionId = await _ensureActiveSessionId();
         final cleanTo = destinationAddress.trim().toLowerCase().replaceFirst(RegExp(r'^0x'), '');
         var normalizedAmount = amount.trim();
         if (normalizedAmount.endsWith('.0')) {
@@ -479,7 +473,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
         await _api.transfer(
-          sessionId: _activeSessionId,
+          sessionId: sessionId,
           to: destinationAddress.trim().toLowerCase(),
           amount: amount.trim(),
           signature: signature,
@@ -906,15 +900,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        if (_activeSessionId.isEmpty) {
-          throw Exception(T.of(context, 'session_required'));
-        }
+        final sessionId = await _ensureActiveSessionId();
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendCoinFlip(
           gameId: bet.gameId,
           address: _walletAddress,
-          sessionId: _activeSessionId,
+          sessionId: sessionId,
           side: bet.side,
           amount: bet.amount,
           signature: signature,
@@ -929,6 +921,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
       }
     });
+  }
+
+  Future<String> _ensureActiveSessionId() async {
+    if (_activeSessionId.isNotEmpty) {
+      final cached = _activeSessionId.trim();
+      if (DLinkerApi.isValidSessionId(cached)) return cached;
+      _activeSessionId = '';
+      await AppStorage.clearActiveSessionId();
+    }
+    if (_walletAddress.isEmpty) {
+      throw Exception(T.of(context, 'session_required'));
+    }
+
+    final created = await _api.createPendingAuthSession();
+    final sessionId = (created['sessionId'] ?? '').toString().trim();
+    if (!DLinkerApi.isValidSessionId(sessionId)) {
+      throw Exception('Unable to create session');
+    }
+
+    final pubKey = await _keyService.getPublicKeySpkiBase64();
+    await _api.sendAuth(
+      sessionId: sessionId,
+      address: _walletAddress,
+      publicKey: pubKey,
+    );
+
+    _activeSessionId = sessionId;
+    await AppStorage.setActiveSessionId(sessionId);
+    return sessionId;
   }
 
   void _showSnack(String message) {
