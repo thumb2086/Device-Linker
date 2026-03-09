@@ -1,0 +1,188 @@
+# Device-Linker API Integration
+
+Base URL: `https://device-linker-api.vercel.app/api/`
+
+## Endpoint Overview
+- `POST /api/user`
+- `POST /api/wallet`
+- `POST /api/stats`
+- `POST /api/admin`
+- `POST /api/game?game=<gameId>`
+- `POST /api/market-sim`
+
+## 1) Hardware Authorization
+### Create pending session
+`POST /api/user`
+```json
+{
+  "action": "create_session",
+  "ttlSeconds": 600,
+  "platform": "android",
+  "clientType": "mobile",
+  "deviceId": "dlinker_xxx",
+  "appVersion": "1.0.0+1"
+}
+```
+
+### Authorize session from Device-Linker app
+`POST /api/user`
+```json
+{
+  "action": "authorize",
+  "sessionId": "session_xxx",
+  "address": "0x1234...",
+  "publicKey": "<base64-spki>",
+  "platform": "android",
+  "clientType": "mobile",
+  "deviceId": "dlinker_xxx",
+  "appVersion": "1.0.0+1"
+}
+```
+
+### Poll authorization status
+- `GET /api/user?action=get_status&sessionId=session_xxx`
+- or `POST /api/user` with:
+```json
+{
+  "action": "get_status",
+  "sessionId": "session_xxx"
+}
+```
+
+## 2) Custody Login
+`POST /api/user`
+```json
+{
+  "action": "custody_login",
+  "username": "demo_user",
+  "password": "secret123",
+  "platform": "android",
+  "clientType": "mobile",
+  "deviceId": "dlinker_xxx",
+  "appVersion": "1.0.0+1"
+}
+```
+
+## 3) Wallet / Balance / Summary / History
+### Get wallet balance
+`POST /api/wallet`
+```json
+{
+  "action": "get_balance",
+  "address": "0x1234..."
+}
+```
+
+### Get wallet summary
+`POST /api/wallet`
+```json
+{
+  "action": "summary",
+  "sessionId": "session_xxx"
+}
+```
+
+### Get game settlement history
+`POST /api/wallet`
+```json
+{
+  "action": "game_history",
+  "sessionId": "session_xxx",
+  "limit": 12
+}
+```
+
+Notes:
+- `betAmount` is the stake for that round.
+- `payoutAmount` is the amount transferred back to player wallet for settlement.
+- `netAmount` is real wallet delta for that round; negative means loss.
+
+## 4) Transfer History
+`POST /api/user`
+```json
+{
+  "action": "get_history",
+  "address": "0x1234...",
+  "page": 1,
+  "limit": 20
+}
+```
+
+Notes:
+- Depends on server-side `ETHERSCAN_API_KEY`.
+- If missing in Vercel, history may fail even when client code is correct.
+
+## 5) Secure Transfer
+`POST /api/wallet`
+```json
+{
+  "action": "secure_transfer",
+  "sessionId": "session_xxx",
+  "to": "0xabcd...",
+  "amount": "10",
+  "signature": "<base64-der-signature>",
+  "publicKey": "<base64-spki>"
+}
+```
+
+Signature message format:
+`transfer:<to_without_0x_lowercase>:<amount>`
+
+Example:
+`transfer:abcd1234abcd1234abcd1234abcd1234abcd1234:10`
+
+## 6) Airdrop
+`POST /api/wallet`
+```json
+{
+  "action": "airdrop",
+  "sessionId": "session_xxx"
+}
+```
+
+## 7) Leaderboards
+### Total bet leaderboard
+`POST /api/stats`
+```json
+{
+  "action": "total_bet",
+  "sessionId": "session_xxx",
+  "limit": 50
+}
+```
+
+### Net worth leaderboard
+`POST /api/stats`
+```json
+{
+  "action": "net_worth",
+  "sessionId": "session_xxx",
+  "limit": 50
+}
+```
+
+## 8) Coinflip
+`POST /api/game?game=coinflip&sessionId=session_xxx`
+```json
+{
+  "action": "bet",
+  "address": "0x1234...",
+  "amount": "10",
+  "sessionId": "session_xxx",
+  "choice": "heads",
+  "gameId": "coinflip",
+  "signature": "<base64-der-signature>",
+  "publicKey": "<base64-spki>"
+}
+```
+
+## Device-Linker App Mapping
+- Hardware authorize: `flutter_app/lib/main.dart`
+- Balance: `flutter_app/lib/main.dart`
+- History: `flutter_app/lib/main.dart`
+- Transfer: `flutter_app/lib/main.dart`
+
+Server handlers:
+- User auth/history: `api/user.js`
+- Wallet/balance/transfer: `api/wallet.js`
+- Stats: `api/stats.js`

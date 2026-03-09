@@ -1,33 +1,20 @@
 # 📜 D-Linker 開發日誌
 
 ---
-## [2026-03-07] Update UX Fix: Open GitHub Releases Reliably on Mobile
-**執行內容 (Update Flow):**
-- `GithubUpdateService` 的「立即更新」改為直接打開 GitHub Releases 頁面，不再依賴單一 `canLaunchUrl()` 判斷
-- 若 API 回傳的 `html_url` 為空，會 fallback 到 `/releases/latest`，再 fallback 到 `/releases`
-- 針對手機端加入多重 `launchUrl` 模式嘗試，避免按下「立即更新」沒有跳頁
+## [2026-03-09] Release v2.1.3: API Contract Realignment + Casino Shortcut
+**執行內容 (App Update):**
+- Flutter 版本號更新為 `2.1.3+1`（對應 release tag `v2.1.3`）。
+- 首頁「測試幣」按鈕文案移除固定 `100`，改為動態描述，避免與新版後端規則不一致。
+- 新增首頁「賭場」入口卡片，直通 `https://device-linker-api.vercel.app/`。
+- 新增 `url_launcher` 相依以支援外部網址啟動。
+- API 呼叫改為新版路由：`/api/user`、`/api/wallet`、`/api/game`（含 action-based payload）。
 
 ---
-## [2026-03-07] CI Update: Cache Android SDK CMake for Release Build
-**執行內容 (Build Performance):**
-- `.github/workflows/flutter-multiplatform-build.yml` 新增 Android SDK path 解析步驟
-- 針對 `cmake/3.22.1` 與 Android licenses 增加 GitHub Actions cache
-- 目標是避免 Android release job 在 GitHub-hosted runner 上每次都重新安裝 CMake 3.22.1
-
----
-## [2026-03-07] CI Fix: Disable Gradle File Watching for Android Release Job
-**執行內容 (Build Stability):**
-- Android release workflow 在 `flutter create` 後會對生成的 `android/gradle.properties` 補上 `org.gradle.vfs.watch=false`
-- 目標是避免 GitHub Actions / Linux runner 上出現 `Caught exception: Already watching path: .../flutter_app/android`
-
----
-## [2026-03-07] API Update: Simplified Endpoint Contract Sync
-**執行內容 (API Integration):**
-- Flutter `DLinkerApi` 對齊新版簡化 API，持續使用 `/api/user`、`/api/wallet`、`/api/stats`、`/api/game`
-- `custodyLogin()` 補上 `platform`、`clientType`、`deviceId`、`appVersion`
-- 轉帳簽名與 `secure_transfer` 請求共用同一份標準化 `amount` 字串，避免 `10` / `10.0` 不一致
-- `net_worth` leaderboard 查詢補上 `limit` 參數
-- `README.md` 與 `flutter_app/README.md` 已更新為新版 6 個簡化端點說明
+## [2026-03-02] CI Performance Fix: Disable Gradle VFS Watch on Android
+**執行內容 (Build Speed/Stability):**
+- 在 `.github/workflows/flutter-multiplatform-build.yml` 的 Android 流程中，於 `flutter pub get` 後新增：
+  - `org.gradle.vfs.watch=false` 寫入 `flutter_app/android/gradle.properties`
+- 目的：降低 GitHub Actions 上 Gradle `Already watching path` 例外造成的卡頓/超慢建置問題。
 
 ---
 ## [2026-03-02] Docs: Scarlet Re-sign Install Guide

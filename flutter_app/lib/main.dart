@@ -15,10 +15,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pointycastle/export.dart' hide Padding, State;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
-
-import 'update_service.dart';
 
 enum AppLanguage { system, zhTw, zhCn, en }
 
@@ -156,10 +155,11 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  static final Uri _casinoUri = Uri.parse('https://device-linker-api.vercel.app/');
+
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
-  final GithubUpdateService _updateService = GithubUpdateService();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
   StreamSubscription<String>? _deepLinkStringSubscription;
@@ -172,11 +172,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _lastKnownBalance = 0.0;
   bool _isLoading = false;
   bool _isSyncingBalance = false;
+  String _activeSessionId = '';
 
   String? _pendingAuthSessionId;
   BetRequest? _pendingBet;
   bool _isPromptOpen = false;
-  String? _currentSessionId;
 
   bool get _scannerSupported {
     if (kIsWeb) return true;
@@ -210,11 +210,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _keyService.ensureKeyPair();
     final address = await _keyService.getWalletAddress();
     final lastBalance = await AppStorage.getLastKnownBalance();
+    final activeSessionId = await AppStorage.getActiveSessionId();
 
     if (!mounted) return;
     setState(() {
       _walletAddress = address;
       _lastKnownBalance = lastBalance;
+      _activeSessionId = activeSessionId;
     });
 
     await _syncBalance(notifyIfIncreased: false);
@@ -224,10 +226,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     await _setupDeepLinks();
-
-    if (mounted) {
-      unawaited(_updateService.checkForUpdates(context));
-    }
   }
 
   Future<void> _setupDeepLinks() async {
@@ -360,14 +358,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _requestAirdrop() async {
     if (_walletAddress.isEmpty) return;
+    if (_activeSessionId.isEmpty) {
+      _showSnack(T.of(context, 'session_required'));
+      return;
+    }
     await _runWithLoading(() async {
       try {
-        if (_currentSessionId == null) {
-          throw Exception('Please authenticate or login first');
-        }
-
         await _api.requestAirdrop(
-          sessionId: _currentSessionId!,
+          sessionId: _activeSessionId,
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
@@ -399,6 +397,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openCasino() async {
+    try {
+      final launched = await launchUrl(_casinoUri);
+      if (launched) return;
+      throw Exception('Unable to open casino');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(T.of(context, 'failure_message', [e.toString()]));
+    }
   }
 
   Future<String?> _pickAddressFromContacts() async {
@@ -453,6 +462,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     if (!mounted || amount == null || amount.trim().isEmpty) return;
+    if (_activeSessionId.isEmpty) {
+      _showSnack(T.of(context, 'session_required'));
+      return;
+    }
 
     await _runWithLoading(() async {
       try {
@@ -465,14 +478,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
-        if (_currentSessionId == null) {
-          throw Exception('Please authenticate or login first');
-        }
-
         await _api.transfer(
-          sessionId: _currentSessionId!,
+          sessionId: _activeSessionId,
           to: destinationAddress.trim().toLowerCase(),
-          amount: normalizedAmount,
+          amount: amount.trim(),
           signature: signature,
           publicKey: publicKey,
         );
@@ -854,11 +863,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendAuth(sessionId: sessionId, address: _walletAddress, publicKey: pubKey);
-        
-        setState(() {
-          _currentSessionId = sessionId;
-        });
-
+        _activeSessionId = sessionId;
+        await AppStorage.setActiveSessionId(sessionId);
         if (!mounted) return;
         _showSnack(T.of(context, 'auth_success_return'));
       } catch (e) {
@@ -900,16 +906,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
+        if (_activeSessionId.isEmpty) {
+          throw Exception(T.of(context, 'session_required'));
+        }
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
-        if (_currentSessionId == null) {
-          throw Exception('Please authenticate or login first');
-        }
-
         await _api.sendCoinFlip(
-          sessionId: _currentSessionId!,
           gameId: bet.gameId,
           address: _walletAddress,
+          sessionId: _activeSessionId,
           side: bet.side,
           amount: bet.amount,
           signature: signature,
@@ -1010,6 +1015,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             title: T.of(context, 'transaction_history'),
                             icon: Icons.history,
                             onTap: _openHistory,
+                          ),
+                          const SizedBox(height: 12),
+                          NavigationCard(
+                            title: T.of(context, 'casino'),
+                            icon: Icons.casino,
+                            onTap: _openCasino,
                           ),
                           const SizedBox(height: 12),
                           NavigationCard(
@@ -1741,25 +1752,22 @@ class DLinkerApi {
     return _sessionIdPattern.hasMatch(clean);
   }
 
-  Future<Map<String, dynamic>> _callApi(String domain, String action, Map<String, dynamic> params) async {
-    return _post(domain, {
-      'action': action,
-      ...params,
-    });
-  }
-
   Future<Map<String, dynamic>> createPendingAuthSession({int ttlSeconds = _defaultAuthTtlSeconds}) async {
     if (ttlSeconds < _minAuthTtlSeconds || ttlSeconds > _maxAuthTtlSeconds) {
       throw Exception('ttlSeconds must be between $_minAuthTtlSeconds and $_maxAuthTtlSeconds');
     }
-    return _callApi('user', 'create_session', {
+
+    final authContext = await _buildAuthContext();
+    return _post('user', {
+      'action': 'create_session',
       'ttlSeconds': ttlSeconds,
-      ...(await _buildAuthContext()),
+      ...authContext,
     });
   }
 
   Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
-    return _callApi('user', 'get_status', {
+    return _get('user', queryParameters: {
+      'action': 'get_status',
       'sessionId': _normalizeSessionId(sessionId),
     });
   }
@@ -1769,66 +1777,41 @@ class DLinkerApi {
     required String address,
     required String publicKey,
   }) async {
-    final json = await _callApi('user', 'authorize', {
+    final authContext = await _buildAuthContext();
+    final json = await _post('user', {
+      'action': 'authorize',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
       'publicKey': _normalizePublicKey(publicKey),
-      ...(await _buildAuthContext()),
+      ...authContext,
     });
 
     if (json['success'] == true) return;
     throw Exception((json['error'] ?? 'Auth failed').toString());
   }
 
-  Future<Map<String, dynamic>> custodyLogin({
-    required String username,
-    required String password,
-  }) async {
-    final json = await _callApi('user', 'custody_login', {
-      'username': username,
-      'password': password,
-      ...(await _buildAuthContext()),
-    });
-    if (json['success'] == true) return json;
-    throw Exception((json['error'] ?? 'Custody login failed').toString());
-  }
-
   Future<void> sendCoinFlip({
-    required String sessionId,
     required String gameId,
     required String address,
+    required String sessionId,
     required String side,
     required String amount,
     required String signature,
     required String publicKey,
   }) async {
-    final normalizedGameId = gameId.trim();
-    if (normalizedGameId.isEmpty) {
-      throw Exception('Missing gameId');
-    }
-    final url = Uri.parse('${_baseUrl}game').replace(queryParameters: {
-      'game': normalizedGameId,
-      'sessionId': _normalizeSessionId(sessionId),
+    final normalizedSessionId = _normalizeSessionId(sessionId);
+    final normalizedGameId = gameId.trim().toLowerCase();
+    final json = await _post('game?game=$normalizedGameId&sessionId=$normalizedSessionId', {
+      'action': 'bet',
+      'gameId': gameId,
+      'address': _normalizeAddress(address),
+      'choice': side,
+      'amount': amount,
+      'sessionId': normalizedSessionId,
+      'signature': signature,
+      'publicKey': _normalizePublicKey(publicKey),
     });
-    final response = await _client.post(
-      url,
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'User-Agent': 'D-Linker-Flutter-App',
-      },
-      body: jsonEncode({
-        'action': 'bet',
-        'address': _normalizeAddress(address),
-        'amount': amount,
-        'sessionId': _normalizeSessionId(sessionId),
-        'choice': side,
-        'gameId': normalizedGameId,
-        'signature': signature,
-        'publicKey': _normalizePublicKey(publicKey),
-      }),
-    ).timeout(const Duration(seconds: 60));
 
-    final json = _parseResponse(response);
     if (json['success'] == true) return;
     throw Exception((json['error'] ?? 'Bet failed').toString());
   }
@@ -1836,7 +1819,8 @@ class DLinkerApi {
   Future<String> requestAirdrop({
     required String sessionId,
   }) async {
-    final json = await _callApi('wallet', 'airdrop', {
+    final json = await _post('wallet', {
+      'action': 'airdrop',
       'sessionId': _normalizeSessionId(sessionId),
     });
 
@@ -1847,22 +1831,9 @@ class DLinkerApi {
     throw Exception((json['error'] ?? 'Airdrop failed').toString());
   }
 
-  Future<Map<String, dynamic>> getWalletSummary({
-    required String sessionId,
-  }) async {
-    final json = await _callApi('wallet', 'summary', {
-      'sessionId': _normalizeSessionId(sessionId),
-    });
-
-    if (json['success'] == true) {
-      return json;
-    }
-
-    throw Exception((json['error'] ?? 'Wallet summary failed').toString());
-  }
-
   Future<String> syncBalance(String walletAddress) async {
-    final json = await _callApi('wallet', 'get_balance', {
+    final json = await _post('wallet', {
+      'action': 'get_balance',
       'address': _normalizeAddress(walletAddress),
     });
 
@@ -1880,7 +1851,8 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
   }) async {
-    final json = await _callApi('wallet', 'secure_transfer', {
+    final json = await _post('wallet', {
+      'action': 'secure_transfer',
       'sessionId': _normalizeSessionId(sessionId),
       'to': _normalizeAddress(to),
       'amount': amount,
@@ -1900,7 +1872,8 @@ class DLinkerApi {
     required int page,
     int limit = 20,
   }) async {
-    final json = await _callApi('user', 'get_history', {
+    final json = await _post('user', {
+      'action': 'get_history',
       'address': _normalizeAddress(walletAddress),
       'page': page,
       'limit': limit,
@@ -1929,36 +1902,25 @@ class DLinkerApi {
     );
   }
 
-  Future<List<Map<String, dynamic>>> getTotalBetLeaderboard({
-    required String sessionId,
-    int limit = 50,
+  Future<Map<String, dynamic>> _get(
+    String endpoint, {
+    Map<String, String>? queryParameters,
   }) async {
-    final json = await _callApi('stats', 'total_bet', {
-      'sessionId': _normalizeSessionId(sessionId),
-      'limit': limit,
-    });
-    if (json['success'] == true) {
-      return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);
-    }
-    throw Exception((json['error'] ?? 'Failed to get leaderboard').toString());
+    final uri = Uri.parse('$_baseUrl$endpoint');
+    final url = queryParameters == null ? uri : uri.replace(queryParameters: queryParameters);
+
+    final response = await _client
+        .get(
+          url,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'D-Linker-Flutter-App',
+          },
+        )
+        .timeout(const Duration(seconds: 60));
+
+    return _parseResponse(response);
   }
-
-  Future<List<Map<String, dynamic>>> getNetWorthLeaderboard({
-    required String sessionId,
-    int limit = 50,
-  }) async {
-    final json = await _callApi('stats', 'net_worth', {
-      'sessionId': _normalizeSessionId(sessionId),
-      'limit': limit,
-    });
-    if (json['success'] == true) {
-      return List<Map<String, dynamic>>.from(json['leaderboard'] ?? []);
-    }
-    throw Exception((json['error'] ?? 'Failed to get net worth leaderboard').toString());
-  }
-
-
-
 
   Future<Map<String, dynamic>> _post(String endpoint, Map<String, dynamic> body) async {
     final url = Uri.parse('$_baseUrl$endpoint');
@@ -2436,6 +2398,7 @@ class AppStorage {
   static const String _languageKey = 'app_language';
   static const String _lastBalanceKey = 'last_known_balance';
   static const String _deviceIdKey = 'device_id';
+  static const String _activeSessionIdKey = 'active_session_id';
 
   static Future<AppLanguage> getLanguage() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2470,6 +2433,21 @@ class AppStorage {
 
     await prefs.setString(_deviceIdKey, generated);
     return generated;
+  }
+
+  static Future<String> getActiveSessionId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_activeSessionIdKey) ?? '';
+  }
+
+  static Future<void> setActiveSessionId(String sessionId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeSessionIdKey, sessionId.trim());
+  }
+
+  static Future<void> clearActiveSessionId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_activeSessionIdKey);
   }
 }
 
@@ -2512,9 +2490,11 @@ class T {
       'scan': 'Scan',
       'transfer': 'Transfer',
       'migration': 'Device Migration',
-      'request_test_coins': 'Get 100 {1} Test Coins',
+      'request_test_coins': 'Get Test Coins ({1})',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'session_required': 'Please complete Wallet Auth first',
+      'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
       'address_placeholder': '0x...',
       'cancel': 'Cancel',
@@ -2558,10 +2538,6 @@ class T {
       'add_contact': 'Add Contact',
       'contact_name': 'Name',
       'wallet_address': 'Wallet Address',
-      'update_available': 'Update Available',
-      'update_desc': 'A new version ({1}) is available. Would you like to download it now?',
-      'update_later': 'Later',
-      'update_now': 'Update Now',
     },
     'zh_TW': {
       'token_symbol': '子熙幣',
@@ -2576,9 +2552,11 @@ class T {
       'scan': '掃描',
       'transfer': '轉帳',
       'migration': '設備轉移',
-      'request_test_coins': '領取 100 {1} 測試幣',
+      'request_test_coins': '領取測試幣（{1}）',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'session_required': '請先完成錢包授權',
+      'casino': '賭場',
       'manual_address_input': '手動輸入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',
@@ -2620,10 +2598,6 @@ class T {
       'add_contact': '新增聯絡人',
       'contact_name': '姓名',
       'wallet_address': '錢包地址',
-      'update_available': '有新版本可用',
-      'update_desc': '發現新版本 ({1})。您要現在下載嗎？',
-      'update_later': '稍後',
-      'update_now': '立即更新',
     },
     'zh_CN': {
       'token_symbol': '子熙币',
@@ -2638,9 +2612,11 @@ class T {
       'scan': '扫描',
       'transfer': '转账',
       'migration': '设备转移',
-      'request_test_coins': '领取 100 {1} 测试币',
+      'request_test_coins': '领取测试币（{1}）',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'session_required': '请先完成钱包授权',
+      'casino': '赌场',
       'manual_address_input': '手动输入地址',
       'address_placeholder': '0x...',
       'cancel': '取消',
@@ -2681,11 +2657,7 @@ class T {
       'no_contacts': '目前尚无联系人',
       'add_contact': '新增联系人',
       'contact_name': '姓名',
-      'wallet_address': '錢包地址',
-      'update_available': '有新版本可用',
-      'update_desc': '发现新版本 ({1})。您要现在下载吗？',
-      'update_later': '稍后',
-      'update_now': '立即更新',
+      'wallet_address': '钱包地址',
     },
   };
 
