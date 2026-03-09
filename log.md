@@ -1,6 +1,13 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-09] Release v2.1.4: Auto Session for Hardware Wallet Actions
+**執行內容 (Flow Fix):**
+- Flutter 版本號更新為 `2.1.4+1`（對應 release tag `v2.1.4`）。
+- 修正硬體錢包流程：空投/轉帳/下注改為自動建立並授權 session，不再要求先手動 Wallet Auth。
+- 加入 session 快取防呆：若格式異常會自動清除並重建。
+
+---
 ## [2026-03-09] Release v2.1.3: API Contract Realignment + Casino Shortcut
 **執行內容 (App Update):**
 - Flutter 版本號更新為 `2.1.3+1`（對應 release tag `v2.1.3`）。
