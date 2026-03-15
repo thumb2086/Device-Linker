@@ -1,6 +1,15 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-03-10] Release v2.1.7: Auto Session Retry on Expiration
+**執行內容 (Resilience):**
+- Flutter 版本號更新為 `2.1.7+1`（對應 release tag `v2.1.7`）。
+- 實作 API 呼叫的 Session 自動重試機制：
+  - 偵測到 `Session expired` 錯誤時，自動清除快取並建立新 Session。
+  - 受影響功能：空投領取、轉帳、搬家、下注簽名。
+- 優化 `_ensureActiveSessionId` 邏輯，支援強制重新整理（`force: true`）。
+
+---
 ## [2026-03-09] Release v2.1.6: Auto Update Check Toggle
 **執行內容 (Settings):**
 - Flutter 版本號更新為 `2.1.6+1`（對應 release tag `v2.1.6`）。

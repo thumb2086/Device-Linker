@@ -383,10 +383,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_walletAddress.isEmpty) return;
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
-        await _api.requestAirdrop(
-          sessionId: sessionId,
-        );
+        await _callWithSessionRetry((sessionId) => _api.requestAirdrop(
+              sessionId: sessionId,
+            ));
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -396,6 +395,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
       }
     });
+  }
+
+  Future<T> _callWithSessionRetry<T>(Future<T> Function(String sessionId) action) async {
+    try {
+      final sessionId = await _ensureActiveSessionId();
+      return await action(sessionId);
+    } catch (e) {
+      final errorStr = e.toString();
+      if (errorStr.contains('Session expired')) {
+        debugPrint('Session expired detected, forcing new session and retrying...');
+        final newSessionId = await _ensureActiveSessionId(force: true);
+        return await action(newSessionId);
+      }
+      rethrow;
+    }
   }
 
   Future<void> _openHistory() async {
@@ -485,7 +499,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
         final cleanTo = destinationAddress.trim().toLowerCase().replaceFirst(RegExp(r'^0x'), '');
         var normalizedAmount = amount.trim();
         if (normalizedAmount.endsWith('.0')) {
@@ -495,13 +508,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
-        await _api.transfer(
-          sessionId: sessionId,
-          to: destinationAddress.trim().toLowerCase(),
-          amount: amount.trim(),
-          signature: signature,
-          publicKey: publicKey,
-        );
+        await _callWithSessionRetry((sessionId) => _api.transfer(
+              sessionId: sessionId,
+              to: destinationAddress.trim().toLowerCase(),
+              amount: amount.trim(),
+              signature: signature,
+              publicKey: publicKey,
+            ));
 
         if (!mounted) return;
         _showSnack(T.of(context, 'transfer_success'));
@@ -942,18 +955,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
-        await _api.sendCoinFlip(
-          gameId: bet.gameId,
-          address: _walletAddress,
-          sessionId: sessionId,
-          side: bet.side,
-          amount: bet.amount,
-          signature: signature,
-          publicKey: pubKey,
-        );
+        await _callWithSessionRetry((sessionId) => _api.sendCoinFlip(
+              gameId: bet.gameId,
+              address: _walletAddress,
+              sessionId: sessionId,
+              side: bet.side,
+              amount: bet.amount,
+              signature: signature,
+              publicKey: pubKey,
+            ));
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -965,13 +977,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  Future<String> _ensureActiveSessionId() async {
-    if (_activeSessionId.isNotEmpty) {
+  Future<String> _ensureActiveSessionId({bool force = false}) async {
+    if (!force && _activeSessionId.isNotEmpty) {
       final cached = _activeSessionId.trim();
       if (DLinkerApi.isValidSessionId(cached)) return cached;
-      _activeSessionId = '';
-      await AppStorage.clearActiveSessionId();
     }
+
+    _activeSessionId = '';
+    await AppStorage.clearActiveSessionId();
+
     if (_walletAddress.isEmpty) {
       throw Exception('Session required');
     }
