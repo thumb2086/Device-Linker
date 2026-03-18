@@ -1422,7 +1422,7 @@ class _MarketSimScreenState extends State<MarketSimScreen> {
   Future<void> _loadSnapshot() async {
     setState(() => _loading = true);
     try {
-      final sessionId = await AppStorage.getActiveSessionId() ?? '';
+      final sessionId = await AppStorage.getActiveSessionId();
       final res = await widget.api.sendMarketSimAction(
         sessionId: sessionId,
         action: 'snapshot',
@@ -1446,7 +1446,7 @@ class _MarketSimScreenState extends State<MarketSimScreen> {
   Future<void> _bankDeposit() async {
     setState(() => _loading = true);
     try {
-      final sessionId = await AppStorage.getActiveSessionId() ?? '';
+      final sessionId = await AppStorage.getActiveSessionId();
       await widget.api.sendMarketSimAction(
         sessionId: sessionId,
         action: 'bank_deposit',
@@ -2102,7 +2102,7 @@ class DLinkerApi {
     required String action,
     Map<String, dynamic>? extraPayload,
   }) async {
-    final payload = {
+    final Map<String, dynamic> payload = {
       'action': action,
       'sessionId': _normalizeSessionId(sessionId),
     };
