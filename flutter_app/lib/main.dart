@@ -1087,6 +1087,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           const SizedBox(height: 12),
                           NavigationCard(
+                            title: '股票市場 (Market Sim)',
+                            icon: Icons.show_chart,
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => MarketSimScreen(
+                                    api: _api,
+                                    walletAddress: _walletAddress,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          NavigationCard(
                             title: T.of(context, 'contacts'),
                             icon: Icons.contact_page,
                             onTap: _openContacts,
@@ -1376,6 +1391,123 @@ class _ScannerDialogState extends State<ScannerDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class MarketSimScreen extends StatefulWidget {
+  const MarketSimScreen({
+    super.key,
+    required this.api,
+    required this.walletAddress,
+  });
+
+  final DLinkerApi api;
+  final String walletAddress;
+
+  @override
+  State<MarketSimScreen> createState() => _MarketSimScreenState();
+}
+
+class _MarketSimScreenState extends State<MarketSimScreen> {
+  bool _loading = false;
+  Map<String, dynamic>? _account;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSnapshot();
+  }
+
+  Future<void> _loadSnapshot() async {
+    setState(() => _loading = true);
+    try {
+      final sessionId = await AppStorage.getActiveSessionId() ?? '';
+      final res = await widget.api.sendMarketSimAction(
+        sessionId: sessionId,
+        action: 'snapshot',
+      );
+      if (mounted) {
+        setState(() {
+          _account = res['account'] as Map<String, dynamic>?;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Market Sim Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _bankDeposit() async {
+    setState(() => _loading = true);
+    try {
+      final sessionId = await AppStorage.getActiveSessionId() ?? '';
+      await widget.api.sendMarketSimAction(
+        sessionId: sessionId,
+        action: 'bank_deposit',
+        extraPayload: {'amount': 100},
+      );
+      await _loadSnapshot();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('存款 100 成功')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deposit Error: $e')),
+        );
+      }
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bal = _account?['cash']?.toString() ?? '0.00';
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('股票市場 (Market Sim)'),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _loadSnapshot,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: _loading && _account == null
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Market Account Cash', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Text('\$$bal', style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: _loading ? null : _bankDeposit,
+                  icon: const Icon(Icons.account_balance),
+                  label: const Text('Bank Deposit (100)'),
+                ),
+                // Additional UI hooks for buy_stock / sell_stock can be naturally extended here
+              ],
+            ),
     );
   }
 }
@@ -1963,6 +2095,26 @@ class DLinkerApi {
       hasMore: (json['hasMore'] as bool?) ?? false,
       history: history,
     );
+  }
+
+  Future<Map<String, dynamic>> sendMarketSimAction({
+    required String sessionId,
+    required String action,
+    Map<String, dynamic>? extraPayload,
+  }) async {
+    final payload = {
+      'action': action,
+      'sessionId': _normalizeSessionId(sessionId),
+    };
+    if (extraPayload != null) {
+      payload.addAll(extraPayload);
+    }
+    
+    final json = await _post('market-sim', payload);
+    if (json['success'] == true) {
+      return json;
+    }
+    throw Exception((json['error'] ?? 'Market sim action failed').toString());
   }
 
   Future<Map<String, dynamic>> _get(

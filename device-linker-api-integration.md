@@ -176,6 +176,23 @@ Example:
 }
 ```
 
+## 9) Market Simulation & Stock Trading
+`POST /api/market-sim`
+
+Common request fields:
+- `sessionId`: "session_xxx"
+- `action`: "snapshot" | "bank_deposit" | "bank_withdraw" | "borrow" | "repay" | "buy_stock" | "sell_stock" | "open_futures" | "close_futures"
+
+Examples:
+```json
+{ "action": "bank_deposit", "sessionId": "session_xxx", "amount": 100 }
+{ "action": "buy_stock", "sessionId": "session_xxx", "symbol": "BTC", "quantity": 1.5 }
+{ "action": "open_futures", "sessionId": "session_xxx", "symbol": "BTC", "side": "long", "margin": 100, "leverage": 10 }
+{ "action": "close_futures", "sessionId": "session_xxx", "positionId": "pos_123" }
+```
+
+Response includes `account`, `market`, `vipLevel`, `maxBet` and `actionResult`.
+
 ## Device-Linker App Mapping
 - Hardware authorize: `flutter_app/lib/main.dart`
 - Balance: `flutter_app/lib/main.dart`
