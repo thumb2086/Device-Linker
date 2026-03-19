@@ -384,7 +384,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _runWithLoading(() async {
       try {
         await _withRetriedSession((sessionId) {
-          return _api.requestAirdrop(sessionId: sessionId);
+          return _api.requestAirdrop(
+            sessionId: sessionId,
+            address: _walletAddress,
+          );
         });
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
@@ -496,6 +499,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await _withRetriedSession((sessionId) {
           return _api.transfer(
             sessionId: sessionId,
+            from: _walletAddress,
             to: destinationAddress.trim().toLowerCase(),
             amount: amount.trim(),
             signature: signature,
@@ -2030,10 +2034,12 @@ class DLinkerApi {
 
   Future<String> requestAirdrop({
     required String sessionId,
+    required String address,
   }) async {
     final json = await _post('wallet', {
       'action': 'airdrop',
       'sessionId': _normalizeSessionId(sessionId),
+      'address': _normalizeAddress(address),
     });
 
     if (json['success'] == true) {
@@ -2058,6 +2064,7 @@ class DLinkerApi {
 
   Future<String> transfer({
     required String sessionId,
+    required String from,
     required String to,
     required String amount,
     required String signature,
@@ -2066,6 +2073,7 @@ class DLinkerApi {
     final json = await _post('wallet', {
       'action': 'secure_transfer',
       'sessionId': _normalizeSessionId(sessionId),
+      'from': _normalizeAddress(from),
       'to': _normalizeAddress(to),
       'amount': amount,
       'signature': signature,

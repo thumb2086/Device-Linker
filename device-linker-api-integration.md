@@ -118,6 +118,7 @@ Notes:
 {
   "action": "secure_transfer",
   "sessionId": "session_xxx",
+  "from": "0x1234...",
   "to": "0xabcd...",
   "amount": "10",
   "signature": "<base64-der-signature>",
@@ -136,9 +137,14 @@ Example:
 ```json
 {
   "action": "airdrop",
-  "sessionId": "session_xxx"
+  "sessionId": "session_xxx",
+  "address": "0x1234..."
 }
 ```
+
+Notes:
+- Flutter should send `address` / `from` together with `sessionId` for wallet actions.
+- Backend `api/wallet.js` uses them as a fallback when KV session replication is briefly delayed right after authorization.
 
 ## 7) Leaderboards
 ### Total bet leaderboard
@@ -192,6 +198,9 @@ Examples:
 ```
 
 Response includes `account`, `market`, `vipLevel`, `maxBet` and `actionResult`.
+
+Notes:
+- This route belongs to the 子熙模擬器 / market simulator flow, not the Device-Linker wallet app UI.
 
 ## Device-Linker App Mapping
 - Hardware authorize: `flutter_app/lib/main.dart`
