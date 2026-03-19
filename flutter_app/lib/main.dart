@@ -383,10 +383,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_walletAddress.isEmpty) return;
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
-        await _api.requestAirdrop(
-          sessionId: sessionId,
-        );
+        await _withRetriedSession((sessionId) {
+          return _api.requestAirdrop(sessionId: sessionId);
+        });
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -485,7 +484,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
         final cleanTo = destinationAddress.trim().toLowerCase().replaceFirst(RegExp(r'^0x'), '');
         var normalizedAmount = amount.trim();
         if (normalizedAmount.endsWith('.0')) {
@@ -495,13 +493,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
         final publicKey = await _keyService.getPublicKeySpkiBase64();
 
-        await _api.transfer(
-          sessionId: sessionId,
-          to: destinationAddress.trim().toLowerCase(),
-          amount: amount.trim(),
-          signature: signature,
-          publicKey: publicKey,
-        );
+        await _withRetriedSession((sessionId) {
+          return _api.transfer(
+            sessionId: sessionId,
+            to: destinationAddress.trim().toLowerCase(),
+            amount: amount.trim(),
+            signature: signature,
+            publicKey: publicKey,
+          );
+        });
 
         if (!mounted) return;
         _showSnack(T.of(context, 'transfer_success'));
@@ -942,18 +942,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        final sessionId = await _ensureActiveSessionId();
         final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
         final pubKey = await _keyService.getPublicKeySpkiBase64();
-        await _api.sendCoinFlip(
-          gameId: bet.gameId,
-          address: _walletAddress,
-          sessionId: sessionId,
-          side: bet.side,
-          amount: bet.amount,
-          signature: signature,
-          publicKey: pubKey,
-        );
+        await _withRetriedSession((sessionId) {
+          return _api.sendCoinFlip(
+            gameId: bet.gameId,
+            address: _walletAddress,
+            sessionId: sessionId,
+            side: bet.side,
+            amount: bet.amount,
+            signature: signature,
+            publicKey: pubKey,
+          );
+        });
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -966,12 +967,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<String> _ensureActiveSessionId() async {
-    if (_activeSessionId.isNotEmpty) {
-      final cached = _activeSessionId.trim();
-      if (DLinkerApi.isValidSessionId(cached)) return cached;
-      _activeSessionId = '';
-      await AppStorage.clearActiveSessionId();
+    return _ensureActiveSessionIdInternal(forceRefresh: false);
+  }
+
+  Future<T> _withRetriedSession<T>(Future<T> Function(String sessionId) action) async {
+    var sessionId = await _ensureActiveSessionIdInternal(forceRefresh: false);
+    try {
+      return await action(sessionId);
+    } catch (error) {
+      if (!_api.isSessionExpiredError(error)) rethrow;
+      sessionId = await _ensureActiveSessionIdInternal(forceRefresh: true);
+      return action(sessionId);
     }
+  }
+
+  Future<void> _clearActiveSession() async {
+    _activeSessionId = '';
+    await AppStorage.clearActiveSessionId();
+  }
+
+  Future<String> _ensureActiveSessionIdInternal({required bool forceRefresh}) async {
+    if (!forceRefresh && _activeSessionId.isEmpty) {
+      final persisted = await AppStorage.getActiveSessionId();
+      if (persisted.trim().isNotEmpty) {
+        _activeSessionId = persisted.trim();
+      }
+    }
+
+    if (!forceRefresh && _activeSessionId.isNotEmpty) {
+      final cached = _activeSessionId.trim();
+      if (DLinkerApi.isValidSessionId(cached) && await _api.isSessionAuthorized(cached)) {
+        return cached;
+      }
+      await _clearActiveSession();
+    } else if (forceRefresh && _activeSessionId.isNotEmpty) {
+      await _clearActiveSession();
+    }
+
     if (_walletAddress.isEmpty) {
       throw Exception('Session required');
     }
@@ -1084,21 +1116,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             title: T.of(context, 'casino'),
                             icon: Icons.casino,
                             onTap: _openCasino,
-                          ),
-                          const SizedBox(height: 12),
-                          NavigationCard(
-                            title: '股票市場 (Market Sim)',
-                            icon: Icons.show_chart,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => MarketSimScreen(
-                                    api: _api,
-                                    walletAddress: _walletAddress,
-                                  ),
-                                ),
-                              );
-                            },
                           ),
                           const SizedBox(height: 12),
                           NavigationCard(
@@ -2095,6 +2112,23 @@ class DLinkerApi {
       hasMore: (json['hasMore'] as bool?) ?? false,
       history: history,
     );
+  }
+
+  Future<bool> isSessionAuthorized(String sessionId) async {
+    try {
+      final json = await getAuthStatus(sessionId: sessionId);
+      final status = (json['status'] ?? '').toString().toLowerCase();
+      return json['success'] == true && status == 'authorized';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool isSessionExpiredError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('session expired') ||
+        message.contains('missing from address') ||
+        message.contains('missing address');
   }
 
   Future<Map<String, dynamic>> sendMarketSimAction({
