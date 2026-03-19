@@ -970,11 +970,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  Future<String> _ensureActiveSessionId() async {
-    return _ensureActiveSessionIdInternal(forceRefresh: false);
-  }
-
-  Future<T> _withRetriedSession<T>(Future<T> Function(String sessionId) action) async {
+  Future<TResult> _withRetriedSession<TResult>(
+    Future<TResult> Function(String sessionId) action,
+  ) async {
     var sessionId = await _ensureActiveSessionIdInternal(forceRefresh: false);
     try {
       return await action(sessionId);
