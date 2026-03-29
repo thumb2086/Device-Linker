@@ -155,6 +155,54 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
+class AppToken {
+  const AppToken({
+    required this.id,
+    required this.address,
+    required this.symbol,
+    required this.nameEn,
+    required this.nameZhTw,
+    required this.nameZhCn,
+  });
+
+  final String id;
+  final String address;
+  final String symbol;
+  final String nameEn;
+  final String nameZhTw;
+  final String nameZhCn;
+
+  static const List<AppToken> supported = [
+    AppToken(
+      id: 'zhixi',
+      address: '0xe3d9af5f15857cb01e0614fa281fcc3256f62050',
+      symbol: 'ZHIXI',
+      nameEn: 'Zhixi Coin',
+      nameZhTw: '子熙幣',
+      nameZhCn: '子熙币',
+    ),
+    AppToken(
+      id: 'youjian',
+      address: '0x82D6aDB17d58820324D86B378775350D03a071AE',
+      symbol: 'YOUJIAN',
+      nameEn: 'Youjian Coin',
+      nameZhTw: '佑戩幣',
+      nameZhCn: '佑戩币',
+    ),
+  ];
+
+  String displayName(BuildContext context) {
+    final locale = Localizations.localeOf(context);
+    if (locale.languageCode == 'zh' && locale.countryCode?.toUpperCase() == 'TW') {
+      return nameZhTw;
+    }
+    if (locale.languageCode == 'zh') {
+      return nameZhCn;
+    }
+    return nameEn;
+  }
+}
+
 class _DashboardScreenState extends State<DashboardScreen> {
   static final Uri _casinoUri = Uri.parse('https://device-linker-api.vercel.app/');
 
@@ -170,8 +218,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime? _lastHandledDeepLinkAt;
 
   String _walletAddress = '';
-  String _balance = '0.00';
-  double _lastKnownBalance = 0.0;
+  late AppToken _selectedToken = AppToken.supported.first;
+  Map<String, String> _balances = {
+    for (final token in AppToken.supported) token.id: '0.00',
+  };
+  Map<String, double> _lastKnownBalances = {
+    for (final token in AppToken.supported) token.id: 0.0,
+  };
   bool _isLoading = false;
   bool _isSyncingBalance = false;
   String _activeSessionId = '';
@@ -193,6 +246,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  String get _selectedBalance => _balances[_selectedToken.id] ?? '0.00';
+
   @override
   void initState() {
     super.initState();
@@ -212,22 +267,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _keyService.ensureKeyPair();
     final address = await _keyService.getWalletAddress();
-    final lastBalance = await AppStorage.getLastKnownBalance();
+    final lastBalances = await AppStorage.getLastKnownBalances();
     final activeSessionId = await AppStorage.getActiveSessionId();
     final autoUpdateCheckEnabled = await AppStorage.getAutoUpdateCheckEnabled();
 
     if (!mounted) return;
     setState(() {
       _walletAddress = address;
-      _lastKnownBalance = lastBalance;
+      _lastKnownBalances = {
+        for (final token in AppToken.supported) token.id: lastBalances[token.id] ?? 0.0,
+      };
       _activeSessionId = activeSessionId;
       _autoUpdateCheckEnabled = autoUpdateCheckEnabled;
     });
 
-    await _syncBalance(notifyIfIncreased: false);
+    await _syncBalances(notifyIfIncreased: false);
 
     _balanceTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _syncBalance();
+      _syncBalances();
     });
 
     await _setupDeepLinks();
@@ -344,34 +401,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _syncBalance({bool notifyIfIncreased = true}) async {
+  Future<void> _syncBalances({bool notifyIfIncreased = true}) async {
     if (_walletAddress.isEmpty || _isSyncingBalance) return;
     _isSyncingBalance = true;
 
     try {
-      final previousBalance = _lastKnownBalance;
-      final nextBalance = await _api.syncBalance(_walletAddress);
-      final next = double.tryParse(nextBalance) ?? 0.0;
-      final shouldNotify = notifyIfIncreased && next > previousBalance;
+      final nextBalances = <String, String>{};
+      final nextKnownBalances = <String, double>{};
 
-      _lastKnownBalance = next;
-      await AppStorage.setLastKnownBalance(nextBalance);
+      for (final token in AppToken.supported) {
+        final previousBalance = _lastKnownBalances[token.id] ?? 0.0;
+        final nextBalance = await _api.syncBalance(
+          _walletAddress,
+          tokenAddress: token.address,
+        );
+        final next = double.tryParse(nextBalance) ?? 0.0;
+        final shouldNotify = notifyIfIncreased && next > previousBalance;
+
+        nextBalances[token.id] = nextBalance;
+        nextKnownBalances[token.id] = next;
+        await AppStorage.setLastKnownBalance(token.id, nextBalance);
+
+        if (shouldNotify) {
+          try {
+            await NotificationService.instance.showBalanceNotification(
+              amount: next - previousBalance,
+              total: next,
+            );
+          } catch (e) {
+            debugPrint('Balance notification failed: $e');
+          }
+        }
+      }
 
       if (!mounted) return;
       setState(() {
-        _balance = nextBalance;
+        _balances = {
+          ..._balances,
+          ...nextBalances,
+        };
+        _lastKnownBalances = {
+          ..._lastKnownBalances,
+          ...nextKnownBalances,
+        };
       });
-
-      if (shouldNotify) {
-        try {
-          await NotificationService.instance.showBalanceNotification(
-            amount: next - previousBalance,
-            total: next,
-          );
-        } catch (e) {
-          debugPrint('Balance notification failed: $e');
-        }
-      }
     } catch (e) {
       debugPrint('Balance sync failed: $e');
     } finally {
@@ -387,12 +460,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return _api.requestAirdrop(
             sessionId: sessionId,
             address: _walletAddress,
+            tokenAddress: _selectedToken.address,
           );
         });
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -404,7 +478,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HistoryScreen(api: _api, keyService: _keyService),
+        builder: (_) => HistoryScreen(
+          api: _api,
+          keyService: _keyService,
+          symbol: _selectedToken.displayName(context),
+        ),
       ),
     );
   }
@@ -480,7 +558,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final amount = await _showTransferDialog(
       toAddress: destinationAddress,
       isMigration: isMigration,
-      presetAmount: isMigration ? _balance : '10',
+      presetAmount: isMigration ? _selectedBalance : '10',
     );
 
     if (!mounted || amount == null || amount.trim().isEmpty) return;
@@ -501,16 +579,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             sessionId: sessionId,
             from: _walletAddress,
             to: destinationAddress.trim().toLowerCase(),
-            amount: amount.trim(),
+            amount: normalizedAmount,
             signature: signature,
             publicKey: publicKey,
+            tokenAddress: _selectedToken.address,
           );
         });
 
         if (!mounted) return;
         _showSnack(T.of(context, 'transfer_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -642,7 +721,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(
           isMigration
               ? T.of(context, 'migration_title')
-              : T.of(context, 'send_symbol', [T.of(context, 'token_symbol')]),
+              : T.of(context, 'send_symbol', [_selectedToken.displayName(context)]),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -925,7 +1004,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'Coin Flip',
                 bet.side,
                 bet.amount,
-                T.of(context, 'token_symbol'),
+                _selectedToken.displayName(context),
               ]),
             ),
             actions: [
@@ -962,7 +1041,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -1036,7 +1115,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final tokenSymbol = T.of(context, 'token_symbol');
+    final tokenSymbol = _selectedToken.displayName(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -1045,7 +1124,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           IconButton(
             onPressed: () {
               _runWithLoading(() async {
-                await _syncBalance();
+                await _syncBalances();
               });
             },
             icon: const Icon(Icons.refresh),
@@ -1069,9 +1148,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           AssetCard(
-                            balance: _balance,
+                            balance: _selectedBalance,
                             address: _walletAddress,
                             symbol: tokenSymbol,
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final token in AppToken.supported)
+                                ChoiceChip(
+                                  label: Text(token.displayName(context)),
+                                  selected: token.id == _selectedToken.id,
+                                  onSelected: (selected) {
+                                    if (!selected) return;
+                                    setState(() {
+                                      _selectedToken = token;
+                                    });
+                                  },
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 24),
                           Row(
@@ -1536,10 +1633,12 @@ class HistoryScreen extends StatefulWidget {
     super.key,
     required this.api,
     required this.keyService,
+    required this.symbol,
   });
 
   final DLinkerApi api;
   final KeyService keyService;
+  final String symbol;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -1635,8 +1734,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final symbol = T.of(context, 'token_symbol');
-
     return Scaffold(
       appBar: AppBar(
         title: Text(T.of(context, 'transaction_history')),
@@ -1703,7 +1800,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                     Text(
-                      '${isSend ? '-' : '+'} ${item.amount} $symbol',
+                      '${isSend ? '-' : '+'} ${item.amount} ${widget.symbol}',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         color: isSend ? null : Colors.green,
@@ -2033,11 +2130,13 @@ class DLinkerApi {
   Future<String> requestAirdrop({
     required String sessionId,
     required String address,
+    required String tokenAddress,
   }) async {
     final json = await _post('wallet', {
       'action': 'airdrop',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
+      'tokenAddress': _normalizeAddress(tokenAddress),
     });
 
     if (json['success'] == true) {
@@ -2047,10 +2146,29 @@ class DLinkerApi {
     throw Exception((json['error'] ?? 'Airdrop failed').toString());
   }
 
-  Future<String> syncBalance(String walletAddress) async {
+  Future<Map<String, dynamic>> getWalletSummary({
+    required String sessionId,
+  }) async {
+    final json = await _post('wallet', {
+      'action': 'summary',
+      'sessionId': _normalizeSessionId(sessionId),
+    });
+
+    if (json['success'] == true) {
+      return json;
+    }
+
+    throw Exception((json['error'] ?? 'Wallet summary failed').toString());
+  }
+
+  Future<String> syncBalance(
+    String walletAddress, {
+    required String tokenAddress,
+  }) async {
     final json = await _post('wallet', {
       'action': 'get_balance',
       'address': _normalizeAddress(walletAddress),
+      'tokenAddress': _normalizeAddress(tokenAddress),
     });
 
     if (json.containsKey('balance')) {
@@ -2067,6 +2185,7 @@ class DLinkerApi {
     required String amount,
     required String signature,
     required String publicKey,
+    required String tokenAddress,
   }) async {
     final json = await _post('wallet', {
       'action': 'secure_transfer',
@@ -2076,6 +2195,7 @@ class DLinkerApi {
       'amount': amount,
       'signature': signature,
       'publicKey': _normalizePublicKey(publicKey),
+      'tokenAddress': _normalizeAddress(tokenAddress),
     });
 
     if (json['success'] == true) {
@@ -2651,7 +2771,7 @@ class NotificationService {
 
 class AppStorage {
   static const String _languageKey = 'app_language';
-  static const String _lastBalanceKey = 'last_known_balance';
+  static const String _lastBalanceKeyPrefix = 'last_known_balance_';
   static const String _deviceIdKey = 'device_id';
   static const String _activeSessionIdKey = 'active_session_id';
   static const String _autoUpdateCheckEnabledKey = 'auto_update_check_enabled';
@@ -2667,15 +2787,20 @@ class AppStorage {
     await prefs.setString(_languageKey, language.tag);
   }
 
-  static Future<double> getLastKnownBalance() async {
+  static Future<Map<String, double>> getLastKnownBalances() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_lastBalanceKey) ?? '0.0';
-    return double.tryParse(raw) ?? 0.0;
+    return {
+      for (final token in AppToken.supported)
+        token.id: double.tryParse(
+              prefs.getString('$_lastBalanceKeyPrefix${token.id}') ?? '0.0',
+            ) ??
+            0.0,
+    };
   }
 
-  static Future<void> setLastKnownBalance(String balance) async {
+  static Future<void> setLastKnownBalance(String tokenId, String balance) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastBalanceKey, balance);
+    await prefs.setString('$_lastBalanceKeyPrefix$tokenId', balance);
   }
 
   static Future<String> getDeviceId() async {
