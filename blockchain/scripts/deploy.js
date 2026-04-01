@@ -13,7 +13,7 @@ async function main() {
   await token.waitForDeployment();
 
   console.log("DLinkerToken 已成功部署到:", await token.getAddress());
-  console.log("請將此地址更新到 Android App 與 Firebase Cloud Functions 的配置中。");
+  console.log("請將此地址更新到 Flutter App 與後端 API 的配置中。");
 }
 
 main().catch((error) => {
