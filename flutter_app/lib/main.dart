@@ -458,11 +458,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _runWithLoading(() async {
       try {
         await _withRetriedSession((sessionId) {
+          // Airdrop backend only credits ZHIXI regardless of which token the
+          // user has selected. Explicitly pin the token so we never appear to
+          // send an airdrop for YJC (which the backend would reject anyway).
           return _api.requestAirdrop(
             sessionId: sessionId,
             address: _walletAddress,
-            tokenAddress: _selectedToken.address,
-            token: _selectedToken.id,
+            tokenAddress: AppToken.supported.first.address,
+            token: AppToken.supported.first.id,
           );
         });
         if (!mounted) return;
@@ -484,6 +487,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           api: _api,
           keyService: _keyService,
           symbol: _selectedToken.displayName(context),
+          token: _selectedToken.id,
         ),
       ),
     );
@@ -1637,11 +1641,13 @@ class HistoryScreen extends StatefulWidget {
     required this.api,
     required this.keyService,
     required this.symbol,
+    required this.token,
   });
 
   final DLinkerApi api;
   final KeyService keyService;
   final String symbol;
+  final String token;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -1702,6 +1708,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         walletAddress: _walletAddress,
         page: _nextPage,
         limit: 20,
+        token: widget.token,
       );
 
       if (!mounted) return;
