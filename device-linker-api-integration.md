@@ -1,6 +1,23 @@
 # Device-Linker API Integration
 
+> **專案整合說明**  
+> 此 API 由 [zixi-casino](https://github.com/thumb2086/zixi-casino) 專案的 `apps/api/` 提供  
+> zixi-wallet-backend 已遷移合併至 zixi-casino，詳見該專案 README
+
 Base URL: `https://device-linker-api.vercel.app/api/`
+
+## 專案關係
+
+```
+zixi-casino/              ← 統一後端 API
+├── apps/api/             ← Device-Linker API 實際位置
+├── apps/web/             ← Web 前端
+└── ...
+
+zixi-wallet-frontend/     ← 此專案 (Flutter)
+└── flutter_app/
+    └── lib/main.dart     ← DLinkerApi 配置
+```
 
 ## Endpoint Overview
 - `POST /api/user`

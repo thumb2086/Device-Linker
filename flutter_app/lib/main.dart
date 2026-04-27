@@ -1732,8 +1732,19 @@ class ContactRepository {
   }
 }
 
+/// API 配置
+/// 後端服務由 zixi-casino 專案提供
+/// 專案位置: https://github.com/thumb2086/zixi-casino/tree/master/apps/api
+class ApiConfig {
+  /// 生產環境 API 基礎 URL
+  static const String baseUrl = 'https://device-linker-api.vercel.app/api/';
+
+  /// 連線逾時秒數
+  static const int defaultTimeoutSeconds = 30;
+}
+
 class DLinkerApi {
-  static const String _baseUrl = 'https://device-linker-api.vercel.app/api/';
+  static const String _baseUrl = ApiConfig.baseUrl;
   static const int _defaultAuthTtlSeconds = 600;
   static const int _minAuthTtlSeconds = 60;
   static const int _maxAuthTtlSeconds = 3600;
