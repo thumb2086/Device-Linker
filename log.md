@@ -1,4 +1,21 @@
+
+---
+## [2026-04-01] Cleanup: Legacy Firebase Removal
+**執行內容 (Repository Cleanup):**
+- 移除舊版 Firebase Functions 部署流程 `.github/workflows/deploy-functions.yml`。
+- 移除遺留的 `functions/` 目錄及其相關配置 (`firebase.json`, `firestore.rules`)。
+- 移除根目錄 `package.json` 中的 `firebase-tools` 相依。
+- 更新 `README.md` 與 `agent.md`，移除所有對 Firebase Legacy 功能的描述。
 # 📜 D-Linker 開發日誌
+
+---
+## [2026-04-30] Release v2.1.16: Branch Cleanup + Main Tag Alignment
+**執行內容 (Release Hygiene):**
+- Flutter 版本號更新為 `2.1.16+1`（對應 release tag `v2.1.16`）。
+- 整合 `dev`、`main`、Devin YJC 修正與 legacy Firebase cleanup 分支。
+- 保留多幣別、更新檢查、session retry、history token 參數與 YJC 修正。
+- API 與賭場入口統一指向 `https://zixi-casino.vercel.app/`。
+- 發布後所有 tag 會重新對齊到最終 `main` commit。
 
 ---
 ## [2026-03-09] Release v2.1.6: Auto Update Check Toggle
@@ -20,7 +37,7 @@
 **執行內容 (App Update):**
 - Flutter 版本號更新為 `2.1.3+1`（對應 release tag `v2.1.3`）。
 - 首頁「測試幣」按鈕文案移除固定 `100`，改為動態描述，避免與新版後端規則不一致。
-- 新增首頁「賭場」入口卡片，直通 `https://device-linker-api.vercel.app/`。
+- 新增首頁「賭場」入口卡片，直通 `https://zixi-casino.vercel.app/`。
 - 新增 `url_launcher` 相依以支援外部網址啟動。
 - API 呼叫改為新版路由：`/api/user`、`/api/wallet`、`/api/game`（含 action-based payload）。
 

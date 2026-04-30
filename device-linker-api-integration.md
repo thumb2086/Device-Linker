@@ -1,6 +1,10 @@
 # Device-Linker API Integration
 
-Base URL: `https://device-linker-api.vercel.app/api/`
+> **專案整合說明**
+> 此 API 由 [zixi-casino](https://github.com/thumb2086/zixi-casino) 專案的 `apps/api/` 提供。
+> zixi-wallet-backend 已遷移合併至 zixi-casino。
+
+Base URL: `https://zixi-casino.vercel.app/api/`
 
 ## Endpoint Overview
 - `POST /api/user`
@@ -64,12 +68,43 @@ Base URL: `https://device-linker-api.vercel.app/api/`
 ```
 
 ## 3) Wallet / Balance / Summary / History
+
+### Multi-token support (ZHIXI / YJC)
+
+All wallet actions that act on a single balance accept an optional `token` field
+that selects which ERC-20 contract to operate on. Currently supported:
+
+| `token` value | Symbol | Chinese name |
+| ------------- | ------ | ------------ |
+| `zhixi` (default) | ZHIXI | 子熙幣 |
+| `yjc`             | YJC   | 佑戩幣 |
+
+If `token` is omitted the backend falls back to `zhixi` for backward
+compatibility. Any action that accepts `token` also accepts `tokenAddress`; the
+two are both forwarded for compatibility but `token` is the authoritative
+selector.
+
+Actions that accept `token`: `get_balance`, `secure_transfer`, `import`
+(deposit, receive into user wallet), `withdraw` (cash out), `summary`,
+`game_history` (on `/api/wallet`), and `get_history` (on `/api/user`).
+`airdrop` remains ZHIXI-only.
+
 ### Get wallet balance
 `POST /api/wallet`
 ```json
 {
   "action": "get_balance",
-  "address": "0x1234..."
+  "address": "0x1234...",
+  "token": "zhixi"
+}
+```
+
+For YJC (佑戩幣):
+```json
+{
+  "action": "get_balance",
+  "address": "0x1234...",
+  "token": "yjc"
 }
 ```
 
@@ -112,7 +147,7 @@ Notes:
 - Depends on server-side `ETHERSCAN_API_KEY`.
 - If missing in Vercel, history may fail even when client code is correct.
 
-## 5) Secure Transfer
+## 5) Secure Transfer (匯款 / Send)
 `POST /api/wallet`
 ```json
 {
@@ -121,16 +156,37 @@ Notes:
   "from": "0x1234...",
   "to": "0xabcd...",
   "amount": "10",
+  "token": "zhixi",
   "signature": "<base64-der-signature>",
   "publicKey": "<base64-spki>"
 }
 ```
 
-Signature message format:
+For YJC transfers, set `"token": "yjc"`.
+
+Signature message format (same for both tokens):
 `transfer:<to_without_0x_lowercase>:<amount>`
 
 Example:
 `transfer:abcd1234abcd1234abcd1234abcd1234abcd1234:10`
+
+## 5b) Deposit / Receive (收款 / Import)
+
+Credit an amount to a user wallet from the admin treasury. Used for OTC
+settlements or support credits.
+
+`POST /api/wallet`
+```json
+{
+  "action": "import",
+  "sessionId": "session_xxx",
+  "address": "0x1234...",
+  "amount": "10",
+  "token": "yjc"
+}
+```
+
+Aliases: `action: "deposit"` is accepted and behaves identically.
 
 ## 6) Airdrop
 `POST /api/wallet`
@@ -212,3 +268,20 @@ Server handlers:
 - User auth/history: `api/user.js`
 - Wallet/balance/transfer: `api/wallet.js`
 - Stats: `api/stats.js`
+
+## 10) Legacy Compatibility (GET Endpoints)
+
+### Fast Login
+- `GET /api/user.js?action=create_session`
+- Returns: `{ "sessionId": "session_xxx", "success": true }`
+
+### Get Balance (v1)
+- `GET /api/v1/wallet/balance/:token`
+- Header: `x-session-id: <sessionId>`
+- Params: `token` (e.g., `zhixi`, `yjc`)
+- Returns: `{ "success": true, "data": { "balance": "100", "token": "zhixi" } }`
+
+### Get Balance (Legacy)
+- `GET /api/wallet.js?act=get_balance&token=<token>&sessionId=<sessionId>`
+- Params: `token` (e.g., `zhixi`, `yjc`)
+- Returns: `{ "balance": "0", "success": true }`

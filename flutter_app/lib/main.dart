@@ -182,10 +182,10 @@ class AppToken {
       nameZhCn: '子熙币',
     ),
     AppToken(
-      id: 'youjian',
+      id: 'yjc',
       address: '0x82D6aDB17d58820324D86B378775350D03a071AE',
-      symbol: 'YOUJIAN',
-      nameEn: 'Youjian Coin',
+      symbol: 'YJC',
+      nameEn: 'YouJian Coin',
       nameZhTw: '佑戩幣',
       nameZhCn: '佑戩币',
     ),
@@ -204,7 +204,7 @@ class AppToken {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  static final Uri _casinoUri = Uri.parse('https://device-linker-api.vercel.app/');
+  static final Uri _casinoUri = Uri.parse('https://zixi-casino.vercel.app/');
 
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
@@ -414,6 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final nextBalance = await _api.syncBalance(
           _walletAddress,
           tokenAddress: token.address,
+          token: token.id,
         );
         final next = double.tryParse(nextBalance) ?? 0.0;
         final shouldNotify = notifyIfIncreased && next > previousBalance;
@@ -457,10 +458,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _runWithLoading(() async {
       try {
         await _withRetriedSession((sessionId) {
+          // Airdrop backend only credits ZHIXI regardless of which token the
+          // user has selected. Explicitly pin the token so we never appear to
+          // send an airdrop for YJC (which the backend would reject anyway).
           return _api.requestAirdrop(
             sessionId: sessionId,
             address: _walletAddress,
-            tokenAddress: _selectedToken.address,
+            tokenAddress: AppToken.supported.first.address,
+            token: AppToken.supported.first.id,
           );
         });
         if (!mounted) return;
@@ -482,6 +487,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           api: _api,
           keyService: _keyService,
           symbol: _selectedToken.displayName(context),
+          token: _selectedToken.id,
         ),
       ),
     );
@@ -583,6 +589,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             signature: signature,
             publicKey: publicKey,
             tokenAddress: _selectedToken.address,
+            token: _selectedToken.id,
           );
         });
 
@@ -1634,11 +1641,13 @@ class HistoryScreen extends StatefulWidget {
     required this.api,
     required this.keyService,
     required this.symbol,
+    required this.token,
   });
 
   final DLinkerApi api;
   final KeyService keyService;
   final String symbol;
+  final String token;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -1699,6 +1708,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         walletAddress: _walletAddress,
         page: _nextPage,
         limit: 20,
+        token: widget.token,
       );
 
       if (!mounted) return;
@@ -2044,7 +2054,7 @@ class ContactRepository {
 }
 
 class DLinkerApi {
-  static const String _baseUrl = 'https://device-linker-api.vercel.app/api/';
+  static const String _baseUrl = 'https://zixi-casino.vercel.app/api/';
   static const int _defaultAuthTtlSeconds = 600;
   static const int _minAuthTtlSeconds = 60;
   static const int _maxAuthTtlSeconds = 3600;
@@ -2131,12 +2141,14 @@ class DLinkerApi {
     required String sessionId,
     required String address,
     required String tokenAddress,
+    String token = 'zhixi',
   }) async {
     final json = await _post('wallet', {
       'action': 'airdrop',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
       'tokenAddress': _normalizeAddress(tokenAddress),
+      'token': token,
     });
 
     if (json['success'] == true) {
@@ -2164,11 +2176,13 @@ class DLinkerApi {
   Future<String> syncBalance(
     String walletAddress, {
     required String tokenAddress,
+    String token = 'zhixi',
   }) async {
     final json = await _post('wallet', {
       'action': 'get_balance',
       'address': _normalizeAddress(walletAddress),
       'tokenAddress': _normalizeAddress(tokenAddress),
+      'token': token,
     });
 
     if (json.containsKey('balance')) {
@@ -2186,6 +2200,7 @@ class DLinkerApi {
     required String signature,
     required String publicKey,
     required String tokenAddress,
+    String token = 'zhixi',
   }) async {
     final json = await _post('wallet', {
       'action': 'secure_transfer',
@@ -2196,6 +2211,7 @@ class DLinkerApi {
       'signature': signature,
       'publicKey': _normalizePublicKey(publicKey),
       'tokenAddress': _normalizeAddress(tokenAddress),
+      'token': token,
     });
 
     if (json['success'] == true) {
@@ -2209,12 +2225,14 @@ class DLinkerApi {
     required String walletAddress,
     required int page,
     int limit = 20,
+    String token = 'zhixi',
   }) async {
     final json = await _post('user', {
       'action': 'get_history',
       'address': _normalizeAddress(walletAddress),
       'page': page,
       'limit': limit,
+      'token': token,
     });
 
     if (json['success'] != true) {
@@ -2269,7 +2287,6 @@ class DLinkerApi {
     if (extraPayload != null) {
       payload.addAll(extraPayload);
     }
-    
     final json = await _post('market-sim', payload);
     if (json['success'] == true) {
       return json;

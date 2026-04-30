@@ -294,6 +294,13 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
+      - name: Disable Gradle VFS watch on CI (Android)
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "org.gradle.vfs.watch=false" >> flutter_app/android/gradle.properties
+
       - name: Analyze
         working-directory: flutter_app
         run: flutter analyze
