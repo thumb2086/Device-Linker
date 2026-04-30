@@ -1,3 +1,11 @@
+
+---
+## [2026-04-01] Cleanup: Legacy Firebase Removal
+**執行內容 (Repository Cleanup):**
+- 移除舊版 Firebase Functions 部署流程 `.github/workflows/deploy-functions.yml`。
+- 移除遺留的 `functions/` 目錄及其相關配置 (`firebase.json`, `firestore.rules`)。
+- 移除根目錄 `package.json` 中的 `firebase-tools` 相依。
+- 更新 `README.md` 與 `agent.md`，移除所有對 Firebase Legacy 功能的描述。
 # 📜 D-Linker 開發日誌
 
 ---

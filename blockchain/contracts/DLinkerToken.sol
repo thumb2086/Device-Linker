@@ -14,7 +14,7 @@ contract DLinkerToken is ERC20, Ownable {
         // _mint(msg.sender, 1000000 * 10 ** decimals()); // 100萬顆
     }
 
-    // 管理員 mint 給新用戶（Firebase relay 會呼叫這個）
+    // 管理員 mint 給新用戶（後端 API 會呼叫這個）
     function mintTo(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }

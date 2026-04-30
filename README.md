@@ -8,7 +8,6 @@ Device-Linker 是一個以 Flutter 為核心的多平台錢包應用專案，搭
 
 ## 目錄結構
 - `flutter_app/`: Flutter 應用程式（主要前端）
-- `functions/`: 舊版 Firebase Functions（legacy，已不作為主要後台）
 - `blockchain/`: 合約與鏈上腳本
 - `.github/workflows/`: CI/CD 流程
 
@@ -51,7 +50,6 @@ flutter run
 ## CI/CD
 - `flutter-multiplatform-build.yml`: Flutter 多平台建置與釋出流程
 - iOS 會輸出 `flutter-ios-unsigned.ipa`（未簽名），可供後續 Apple 簽名或第三方重簽工具使用
-- `deploy-functions.yml`: 舊版 Firebase 部署流程（legacy）
 
 ## 遷移備註
 - 本 repo 目前不包含 Flutter 自動產生的平台殼層目錄（如 `flutter_app/android`、`flutter_app/ios`）。

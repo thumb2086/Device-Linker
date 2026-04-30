@@ -5,7 +5,6 @@
 🛑 檔案範圍 (Scope)
 - Flutter (Frontend): `flutter_app/lib/**/*.dart`, `flutter_app/pubspec.yaml`
 - Backend API (Primary): `flutter_app/lib/main.dart` (`DLinkerApi` endpoint/contract)
-- Firebase (Legacy): `functions/index.js`, `functions/package.json`, `firebase.json`, `firestore.rules`
 - Blockchain: `blockchain/contracts/*.sol`, `blockchain/scripts/*`
 - 文件: `README.md`, `architecture.md`, `log.md`, `todo.md`
 
@@ -19,7 +18,7 @@
 
 🧭 任務流程 (Execution)
 1. 先讀 `todo.md`，確認待辦與優先級。
-2. 修改 Flutter 時，優先同步更新 `DLinkerApi` 與 API 文件；僅在維護舊流程時調整 `functions/`。
+2. 修改 Flutter 時，優先同步更新 `DLinkerApi` 與 API 文件。
 3. 完成後更新 `log.md`（新增紀錄，不覆蓋舊內容）。
 4. 勾選 `todo.md` 完成項目。
 

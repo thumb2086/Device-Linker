@@ -268,3 +268,20 @@ Server handlers:
 - User auth/history: `api/user.js`
 - Wallet/balance/transfer: `api/wallet.js`
 - Stats: `api/stats.js`
+
+## 10) Legacy Compatibility (GET Endpoints)
+
+### Fast Login
+- `GET /api/user.js?action=create_session`
+- Returns: `{ "sessionId": "session_xxx", "success": true }`
+
+### Get Balance (v1)
+- `GET /api/v1/wallet/balance/:token`
+- Header: `x-session-id: <sessionId>`
+- Params: `token` (e.g., `zhixi`, `yjc`)
+- Returns: `{ "success": true, "data": { "balance": "100", "token": "zhixi" } }`
+
+### Get Balance (Legacy)
+- `GET /api/wallet.js?act=get_balance&token=<token>&sessionId=<sessionId>`
+- Params: `token` (e.g., `zhixi`, `yjc`)
+- Returns: `{ "balance": "0", "success": true }`
