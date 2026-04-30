@@ -475,15 +475,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           normalizedAmount = normalizedAmount.substring(0, normalizedAmount.length - 2);
         }
 
-        final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
-        final publicKey = await _keyService.getPublicKeySpkiBase64();
-
         await _api.transfer(
           sessionId: _activeSessionId,
           to: destinationAddress.trim().toLowerCase(),
           amount: amount.trim(),
-          signature: signature,
-          publicKey: publicKey,
         );
 
         if (!mounted) return;
@@ -909,16 +904,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (_activeSessionId.isEmpty) {
           throw Exception(T.of(context, 'session_required'));
         }
-        final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
-        final pubKey = await _keyService.getPublicKeySpkiBase64();
         await _api.sendCoinFlip(
-          gameId: bet.gameId,
-          address: _walletAddress,
           sessionId: _activeSessionId,
           side: bet.side,
           amount: bet.amount,
-          signature: signature,
-          publicKey: pubKey,
         );
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
@@ -1737,7 +1726,7 @@ class ContactRepository {
 /// 專案位置: https://github.com/thumb2086/zixi-casino/tree/master/apps/api
 class ApiConfig {
   /// 生產環境 API 基礎 URL
-  static const String baseUrl = 'https://device-linker-api.vercel.app/api/';
+  static const String baseUrl = 'https://zixi-casino.vercel.app/api/';
 
   /// 連線逾時秒數
   static const int defaultTimeoutSeconds = 30;
@@ -1769,7 +1758,7 @@ class DLinkerApi {
     }
 
     final authContext = await _buildAuthContext();
-    return _post('user', {
+    return _post('user.js', {
       'action': 'create_session',
       'ttlSeconds': ttlSeconds,
       ...authContext,
@@ -1777,7 +1766,7 @@ class DLinkerApi {
   }
 
   Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
-    return _get('user', queryParameters: {
+    return _get('user.js', queryParameters: {
       'action': 'get_status',
       'sessionId': _normalizeSessionId(sessionId),
     });
@@ -1789,7 +1778,7 @@ class DLinkerApi {
     required String publicKey,
   }) async {
     final authContext = await _buildAuthContext();
-    final json = await _post('user', {
+    final json = await _post('user.js', {
       'action': 'authorize',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
@@ -1802,80 +1791,84 @@ class DLinkerApi {
   }
 
   Future<void> sendCoinFlip({
-    required String gameId,
-    required String address,
     required String sessionId,
     required String side,
     required String amount,
-    required String signature,
-    required String publicKey,
+    String token = 'zhixi',
   }) async {
     final normalizedSessionId = _normalizeSessionId(sessionId);
-    final normalizedGameId = gameId.trim().toLowerCase();
-    final json = await _post('game?game=$normalizedGameId&sessionId=$normalizedSessionId', {
-      'action': 'bet',
-      'gameId': gameId,
-      'address': _normalizeAddress(address),
-      'choice': side,
-      'amount': amount,
+    final betAmount = double.tryParse(amount) ?? 0;
+    final selection = side.toLowerCase() == 'heads' || side.toLowerCase() == 'h' ? 'heads' : 'tails';
+
+    final json = await _post('v1/games/coinflip/play', {
       'sessionId': normalizedSessionId,
-      'signature': signature,
-      'publicKey': _normalizePublicKey(publicKey),
+      'betAmount': betAmount,
+      'selection': selection,
+      'token': token,
     });
 
     if (json['success'] == true) return;
-    throw Exception((json['error'] ?? 'Bet failed').toString());
+    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Bet failed').toString());
   }
 
   Future<String> requestAirdrop({
     required String sessionId,
   }) async {
-    final json = await _post('wallet', {
-      'action': 'airdrop',
+    final json = await _post('v1/wallet/airdrop', {
       'sessionId': _normalizeSessionId(sessionId),
     });
 
     if (json['success'] == true) {
-      return (json['txHash'] ?? 'Success').toString();
+      return (json['data']?['txHash'] ?? 'Success').toString();
     }
 
-    throw Exception((json['error'] ?? 'Airdrop failed').toString());
+    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Airdrop failed').toString());
   }
 
   Future<String> syncBalance(String walletAddress) async {
-    final json = await _post('wallet', {
-      'action': 'get_balance',
+    // Use v1 wallet/summary endpoint for balance
+    final json = await _get('v1/wallet/summary', queryParameters: {
       'address': _normalizeAddress(walletAddress),
     });
 
-    if (json.containsKey('balance')) {
-      return json['balance'].toString();
+    if (json['success'] == true && json['data'] != null) {
+      // Try to get ZXC balance from onchain or db balance
+      final data = json['data'] as Map<String, dynamic>;
+      final balances = data['balances'] as Map<String, dynamic>?;
+      if (balances != null && balances['ZXC'] != null) {
+        return balances['ZXC'].toString();
+      }
+      // Fallback to onchain zxc balance
+      final onchain = data['onchain'] as Map<String, dynamic>?;
+      if (onchain != null && onchain['zxc'] != null) {
+        final zxc = onchain['zxc'] as Map<String, dynamic>;
+        if (zxc['balance'] != null) {
+          return zxc['balance'].toString();
+        }
+      }
     }
 
-    throw Exception((json['error'] ?? 'Balance fetch failed').toString());
+    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Balance fetch failed').toString());
   }
 
   Future<String> transfer({
     required String sessionId,
     required String to,
     required String amount,
-    required String signature,
-    required String publicKey,
+    String token = 'zhixi',
   }) async {
-    final json = await _post('wallet', {
-      'action': 'secure_transfer',
+    final json = await _post('v1/wallet/transfer', {
       'sessionId': _normalizeSessionId(sessionId),
       'to': _normalizeAddress(to),
       'amount': amount,
-      'signature': signature,
-      'publicKey': _normalizePublicKey(publicKey),
+      'token': token,
     });
 
     if (json['success'] == true) {
-      return (json['txHash'] ?? '').toString();
+      return (json['data']?['txHash'] ?? '').toString();
     }
 
-    throw Exception((json['error'] ?? 'Transfer failed').toString());
+    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Transfer failed').toString());
   }
 
   Future<HistoryResponse> getHistory({
@@ -1883,18 +1876,19 @@ class DLinkerApi {
     required int page,
     int limit = 20,
   }) async {
-    final json = await _post('user', {
-      'action': 'get_history',
+    // Use v1 wallet/summary endpoint for history (ledger entries)
+    final json = await _get('v1/wallet/summary', queryParameters: {
       'address': _normalizeAddress(walletAddress),
-      'page': page,
-      'limit': limit,
     });
 
     if (json['success'] != true) {
-      throw Exception((json['error'] ?? 'Unable to get history').toString());
+      throw Exception((json['error']?['message'] ?? json['error'] ?? 'Unable to get history').toString());
     }
 
-    final listRaw = json['history'];
+    final data = json['data'] as Map<String, dynamic>?;
+    final summary = data?['summary'] as Map<String, dynamic>?;
+    final listRaw = summary?['recentActivity'];
+
     final history = <HistoryItem>[];
     if (listRaw is List) {
       for (final item in listRaw) {
@@ -1907,8 +1901,8 @@ class DLinkerApi {
     }
 
     return HistoryResponse(
-      page: (json['page'] as num?)?.toInt() ?? page,
-      hasMore: (json['hasMore'] as bool?) ?? false,
+      page: page,
+      hasMore: false, // v1 summary returns all recent activity, pagination not supported
       history: history,
     );
   }
