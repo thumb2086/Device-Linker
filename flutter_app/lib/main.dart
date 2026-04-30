@@ -155,7 +155,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  static final Uri _casinoUri = Uri.parse('https://device-linker-api.vercel.app/');
+  static final Uri _casinoUri = Uri.parse('https://zixi-casino.vercel.app/');
 
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();

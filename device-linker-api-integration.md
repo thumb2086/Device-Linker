@@ -4,7 +4,7 @@
 > 此 API 由 [zixi-casino](https://github.com/thumb2086/zixi-casino) 專案的 `apps/api/` 提供  
 > zixi-wallet-backend 已遷移合併至 zixi-casino，詳見該專案 README
 
-Base URL: `https://device-linker-api.vercel.app/api/`
+Base URL: `https://zixi-casino.vercel.app/api/`
 
 ## 專案關係
 

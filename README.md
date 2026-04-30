@@ -36,7 +36,7 @@ flutter run
 - 要安裝到 iPhone，仍需在 macOS + Xcode 進行簽名與匯出 `.ipa`（設定 Team / Provisioning Profile）。
 
 ### 2) Backend API
-- Flutter 端預設呼叫 `https://device-linker-api.vercel.app/api/`
+- Flutter 端預設呼叫 `https://zixi-casino.vercel.app/api/`
 - API 規格文件：`device-linker-api-integration.md`
 - 授權流程:
   - `POST /api/v3/auth/create` 建立 pending session（可帶 `ttlSeconds`，預設 600，範圍 60-3600）
