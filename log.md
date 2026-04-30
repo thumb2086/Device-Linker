@@ -1,6 +1,30 @@
 # 📜 D-Linker 開發日誌
 
 ---
+## [2026-04-30] Release v2.1.16: Branch Cleanup + Main Tag Alignment
+**執行內容 (Release Hygiene):**
+- Flutter 版本號更新為 `2.1.16+1`（對應 release tag `v2.1.16`）。
+- 整合 `dev`、`main`、Devin YJC 修正與 legacy Firebase cleanup 分支。
+- 保留多幣別、更新檢查、session retry、history token 參數與 YJC 修正。
+- API 與賭場入口統一指向 `https://zixi-casino.vercel.app/`。
+- 發布後所有 tag 會重新對齊到最終 `main` commit。
+
+---
+## [2026-03-09] Release v2.1.6: Auto Update Check Toggle
+**執行內容 (Settings):**
+- Flutter 版本號更新為 `2.1.6+1`（對應 release tag `v2.1.6`）。
+- 設定頁新增「自動檢查更新」開關（預設開啟）。
+- 開關狀態持久化儲存到本機，下次啟動沿用。
+- 啟動時僅在開關啟用時執行自動更新檢查。
+
+---
+## [2026-03-09] Release v2.1.4: Auto Session for Hardware Wallet Actions
+**執行內容 (Flow Fix):**
+- Flutter 版本號更新為 `2.1.4+1`（對應 release tag `v2.1.4`）。
+- 修正硬體錢包流程：空投/轉帳/下注改為自動建立並授權 session，不再要求先手動 Wallet Auth。
+- 加入 session 快取防呆：若格式異常會自動清除並重建。
+
+---
 ## [2026-03-09] Release v2.1.3: API Contract Realignment + Casino Shortcut
 **執行內容 (App Update):**
 - Flutter 版本號更新為 `2.1.3+1`（對應 release tag `v2.1.3`）。

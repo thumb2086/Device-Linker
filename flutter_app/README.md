@@ -15,8 +15,8 @@ This folder is an isolated Flutter project for the Device-Linker migration.
 - QR receive address display
 - QR scanner + manual code input
 - Deep link auth flow (`dlinker:login:*`, `dlinker://login/*`)
-- Auth API v3 session metadata (`platform`, `clientType`, `deviceId`, `appVersion`)
-- Pending session API support (`POST /api/v3/auth/create`, `GET /api/auth?sessionId=...`)
+- Simplified `/api/user` auth metadata (`platform`, `clientType`, `deviceId`, `appVersion`)
+- Consolidated API support (`/api/user`, `/api/wallet`, `/api/stats`, `/api/game`, `/api/market-sim`, `/api/admin`)
 - Coin flip signature request flow (`dlinker:coinflip:*`)
 - Transaction history pagination
 - Local contacts management and picker

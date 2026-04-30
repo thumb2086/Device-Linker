@@ -1,23 +1,10 @@
 # Device-Linker API Integration
 
-> **專案整合說明**  
-> 此 API 由 [zixi-casino](https://github.com/thumb2086/zixi-casino) 專案的 `apps/api/` 提供  
-> zixi-wallet-backend 已遷移合併至 zixi-casino，詳見該專案 README
+> **專案整合說明**
+> 此 API 由 [zixi-casino](https://github.com/thumb2086/zixi-casino) 專案的 `apps/api/` 提供。
+> zixi-wallet-backend 已遷移合併至 zixi-casino。
 
 Base URL: `https://zixi-casino.vercel.app/api/`
-
-## 專案關係
-
-```
-zixi-casino/              ← 統一後端 API
-├── apps/api/             ← Device-Linker API 實際位置
-├── apps/web/             ← Web 前端
-└── ...
-
-zixi-wallet-frontend/     ← 此專案 (Flutter)
-└── flutter_app/
-    └── lib/main.dart     ← DLinkerApi 配置
-```
 
 ## Endpoint Overview
 - `POST /api/user`
@@ -135,6 +122,7 @@ Notes:
 {
   "action": "secure_transfer",
   "sessionId": "session_xxx",
+  "from": "0x1234...",
   "to": "0xabcd...",
   "amount": "10",
   "signature": "<base64-der-signature>",
@@ -153,9 +141,14 @@ Example:
 ```json
 {
   "action": "airdrop",
-  "sessionId": "session_xxx"
+  "sessionId": "session_xxx",
+  "address": "0x1234..."
 }
 ```
+
+Notes:
+- Flutter should send `address` / `from` together with `sessionId` for wallet actions.
+- Backend `api/wallet.js` uses them as a fallback when KV session replication is briefly delayed right after authorization.
 
 ## 7) Leaderboards
 ### Total bet leaderboard
@@ -192,6 +185,26 @@ Example:
   "publicKey": "<base64-spki>"
 }
 ```
+
+## 9) Market Simulation & Stock Trading
+`POST /api/market-sim`
+
+Common request fields:
+- `sessionId`: "session_xxx"
+- `action`: "snapshot" | "bank_deposit" | "bank_withdraw" | "borrow" | "repay" | "buy_stock" | "sell_stock" | "open_futures" | "close_futures"
+
+Examples:
+```json
+{ "action": "bank_deposit", "sessionId": "session_xxx", "amount": 100 }
+{ "action": "buy_stock", "sessionId": "session_xxx", "symbol": "BTC", "quantity": 1.5 }
+{ "action": "open_futures", "sessionId": "session_xxx", "symbol": "BTC", "side": "long", "margin": 100, "leverage": 10 }
+{ "action": "close_futures", "sessionId": "session_xxx", "positionId": "pos_123" }
+```
+
+Response includes `account`, `market`, `vipLevel`, `maxBet` and `actionResult`.
+
+Notes:
+- This route belongs to the 子熙模擬器 / market simulator flow, not the Device-Linker wallet app UI.
 
 ## Device-Linker App Mapping
 - Hardware authorize: `flutter_app/lib/main.dart`

@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/crypto.dart' as web3crypto;
 import 'package:web3dart/web3dart.dart';
+import 'update_service.dart';
 
 enum AppLanguage { system, zhTw, zhCn, en }
 
@@ -154,12 +155,61 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
+class AppToken {
+  const AppToken({
+    required this.id,
+    required this.address,
+    required this.symbol,
+    required this.nameEn,
+    required this.nameZhTw,
+    required this.nameZhCn,
+  });
+
+  final String id;
+  final String address;
+  final String symbol;
+  final String nameEn;
+  final String nameZhTw;
+  final String nameZhCn;
+
+  static const List<AppToken> supported = [
+    AppToken(
+      id: 'zhixi',
+      address: '0xe3d9af5f15857cb01e0614fa281fcc3256f62050',
+      symbol: 'ZHIXI',
+      nameEn: 'Zhixi Coin',
+      nameZhTw: '子熙幣',
+      nameZhCn: '子熙币',
+    ),
+    AppToken(
+      id: 'youjian',
+      address: '0x82D6aDB17d58820324D86B378775350D03a071AE',
+      symbol: 'YOUJIAN',
+      nameEn: 'Youjian Coin',
+      nameZhTw: '佑戩幣',
+      nameZhCn: '佑戩币',
+    ),
+  ];
+
+  String displayName(BuildContext context) {
+    final locale = Localizations.localeOf(context);
+    if (locale.languageCode == 'zh' && locale.countryCode?.toUpperCase() == 'TW') {
+      return nameZhTw;
+    }
+    if (locale.languageCode == 'zh') {
+      return nameZhCn;
+    }
+    return nameEn;
+  }
+}
+
 class _DashboardScreenState extends State<DashboardScreen> {
   static final Uri _casinoUri = Uri.parse('https://zixi-casino.vercel.app/');
 
   final DLinkerApi _api = DLinkerApi();
   final KeyService _keyService = KeyService();
   final ContactRepository _contactRepository = ContactRepository();
+  final GithubUpdateService _updateService = GithubUpdateService();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
   StreamSubscription<String>? _deepLinkStringSubscription;
@@ -168,11 +218,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime? _lastHandledDeepLinkAt;
 
   String _walletAddress = '';
-  String _balance = '0.00';
-  double _lastKnownBalance = 0.0;
+  late AppToken _selectedToken = AppToken.supported.first;
+  Map<String, String> _balances = {
+    for (final token in AppToken.supported) token.id: '0.00',
+  };
+  Map<String, double> _lastKnownBalances = {
+    for (final token in AppToken.supported) token.id: 0.0,
+  };
   bool _isLoading = false;
   bool _isSyncingBalance = false;
   String _activeSessionId = '';
+  bool _autoUpdateCheckEnabled = true;
 
   String? _pendingAuthSessionId;
   BetRequest? _pendingBet;
@@ -189,6 +245,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return false;
     }
   }
+
+  String get _selectedBalance => _balances[_selectedToken.id] ?? '0.00';
 
   @override
   void initState() {
@@ -209,23 +267,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _keyService.ensureKeyPair();
     final address = await _keyService.getWalletAddress();
-    final lastBalance = await AppStorage.getLastKnownBalance();
+    final lastBalances = await AppStorage.getLastKnownBalances();
     final activeSessionId = await AppStorage.getActiveSessionId();
+    final autoUpdateCheckEnabled = await AppStorage.getAutoUpdateCheckEnabled();
 
     if (!mounted) return;
     setState(() {
       _walletAddress = address;
-      _lastKnownBalance = lastBalance;
+      _lastKnownBalances = {
+        for (final token in AppToken.supported) token.id: lastBalances[token.id] ?? 0.0,
+      };
       _activeSessionId = activeSessionId;
+      _autoUpdateCheckEnabled = autoUpdateCheckEnabled;
     });
 
-    await _syncBalance(notifyIfIncreased: false);
+    await _syncBalances(notifyIfIncreased: false);
 
     _balanceTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _syncBalance();
+      _syncBalances();
     });
 
     await _setupDeepLinks();
+    _scheduleUpdateCheck();
+  }
+
+  void _scheduleUpdateCheck() {
+    if (!_autoUpdateCheckEnabled) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        _updateService.checkForUpdates(
+          context,
+          title: T.of(context, 'update_available'),
+          descriptionTemplate: T.of(context, 'update_desc'),
+          laterLabel: T.of(context, 'update_later'),
+          nowLabel: T.of(context, 'update_now'),
+          openFailedMessage: T.of(context, 'update_open_failed'),
+        ),
+      );
+    });
   }
 
   Future<void> _setupDeepLinks() async {
@@ -321,34 +401,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _syncBalance({bool notifyIfIncreased = true}) async {
+  Future<void> _syncBalances({bool notifyIfIncreased = true}) async {
     if (_walletAddress.isEmpty || _isSyncingBalance) return;
     _isSyncingBalance = true;
 
     try {
-      final previousBalance = _lastKnownBalance;
-      final nextBalance = await _api.syncBalance(_walletAddress);
-      final next = double.tryParse(nextBalance) ?? 0.0;
-      final shouldNotify = notifyIfIncreased && next > previousBalance;
+      final nextBalances = <String, String>{};
+      final nextKnownBalances = <String, double>{};
 
-      _lastKnownBalance = next;
-      await AppStorage.setLastKnownBalance(nextBalance);
+      for (final token in AppToken.supported) {
+        final previousBalance = _lastKnownBalances[token.id] ?? 0.0;
+        final nextBalance = await _api.syncBalance(
+          _walletAddress,
+          tokenAddress: token.address,
+        );
+        final next = double.tryParse(nextBalance) ?? 0.0;
+        final shouldNotify = notifyIfIncreased && next > previousBalance;
+
+        nextBalances[token.id] = nextBalance;
+        nextKnownBalances[token.id] = next;
+        await AppStorage.setLastKnownBalance(token.id, nextBalance);
+
+        if (shouldNotify) {
+          try {
+            await NotificationService.instance.showBalanceNotification(
+              amount: next - previousBalance,
+              total: next,
+            );
+          } catch (e) {
+            debugPrint('Balance notification failed: $e');
+          }
+        }
+      }
 
       if (!mounted) return;
       setState(() {
-        _balance = nextBalance;
+        _balances = {
+          ..._balances,
+          ...nextBalances,
+        };
+        _lastKnownBalances = {
+          ..._lastKnownBalances,
+          ...nextKnownBalances,
+        };
       });
-
-      if (shouldNotify) {
-        try {
-          await NotificationService.instance.showBalanceNotification(
-            amount: next - previousBalance,
-            total: next,
-          );
-        } catch (e) {
-          debugPrint('Balance notification failed: $e');
-        }
-      }
     } catch (e) {
       debugPrint('Balance sync failed: $e');
     } finally {
@@ -358,19 +454,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _requestAirdrop() async {
     if (_walletAddress.isEmpty) return;
-    if (_activeSessionId.isEmpty) {
-      _showSnack(T.of(context, 'session_required'));
-      return;
-    }
     await _runWithLoading(() async {
       try {
-        await _api.requestAirdrop(
-          sessionId: _activeSessionId,
-        );
+        await _withRetriedSession((sessionId) {
+          return _api.requestAirdrop(
+            sessionId: sessionId,
+            address: _walletAddress,
+            tokenAddress: _selectedToken.address,
+          );
+        });
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -382,7 +478,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HistoryScreen(api: _api, keyService: _keyService),
+        builder: (_) => HistoryScreen(
+          api: _api,
+          keyService: _keyService,
+          symbol: _selectedToken.displayName(context),
+        ),
       ),
     );
   }
@@ -458,14 +558,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final amount = await _showTransferDialog(
       toAddress: destinationAddress,
       isMigration: isMigration,
-      presetAmount: isMigration ? _balance : '10',
+      presetAmount: isMigration ? _selectedBalance : '10',
     );
 
     if (!mounted || amount == null || amount.trim().isEmpty) return;
-    if (_activeSessionId.isEmpty) {
-      _showSnack(T.of(context, 'session_required'));
-      return;
-    }
 
     await _runWithLoading(() async {
       try {
@@ -475,16 +571,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           normalizedAmount = normalizedAmount.substring(0, normalizedAmount.length - 2);
         }
 
-        await _api.transfer(
-          sessionId: _activeSessionId,
-          to: destinationAddress.trim().toLowerCase(),
-          amount: amount.trim(),
-        );
+        final signature = await _keyService.signData('transfer:$cleanTo:$normalizedAmount');
+        final publicKey = await _keyService.getPublicKeySpkiBase64();
+
+        await _withRetriedSession((sessionId) {
+          return _api.transfer(
+            sessionId: sessionId,
+            from: _walletAddress,
+            to: destinationAddress.trim().toLowerCase(),
+            amount: normalizedAmount,
+            signature: signature,
+            publicKey: publicKey,
+            tokenAddress: _selectedToken.address,
+          );
+        });
 
         if (!mounted) return;
         _showSnack(T.of(context, 'transfer_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -616,7 +721,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(
           isMigration
               ? T.of(context, 'migration_title')
-              : T.of(context, 'send_symbol', [T.of(context, 'token_symbol')]),
+              : T.of(context, 'send_symbol', [_selectedToken.displayName(context)]),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -653,18 +758,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _openSettingsDialog() async {
+    bool autoUpdateEnabled = _autoUpdateCheckEnabled;
+
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(T.of(context, 'settings')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _languageTile(AppLanguage.system, T.of(context, 'lang_auto')),
-            _languageTile(AppLanguage.zhTw, T.of(context, 'lang_zh_tw')),
-            _languageTile(AppLanguage.zhCn, T.of(context, 'lang_zh_cn')),
-            _languageTile(AppLanguage.en, T.of(context, 'lang_en')),
-          ],
+        content: StatefulBuilder(
+          builder: (dialogContext, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(T.of(context, 'auto_update_check')),
+                value: autoUpdateEnabled,
+                onChanged: (enabled) async {
+                  setDialogState(() {
+                    autoUpdateEnabled = enabled;
+                  });
+                  await AppStorage.setAutoUpdateCheckEnabled(enabled);
+                  if (!mounted) return;
+                  setState(() {
+                    _autoUpdateCheckEnabled = enabled;
+                  });
+                },
+              ),
+              _languageTile(AppLanguage.system, T.of(context, 'lang_auto')),
+              _languageTile(AppLanguage.zhTw, T.of(context, 'lang_zh_tw')),
+              _languageTile(AppLanguage.zhCn, T.of(context, 'lang_zh_cn')),
+              _languageTile(AppLanguage.en, T.of(context, 'lang_en')),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -880,7 +1004,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'Coin Flip',
                 bet.side,
                 bet.amount,
-                T.of(context, 'token_symbol'),
+                _selectedToken.displayName(context),
               ]),
             ),
             actions: [
@@ -901,23 +1025,86 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await _runWithLoading(() async {
       try {
-        if (_activeSessionId.isEmpty) {
-          throw Exception(T.of(context, 'session_required'));
-        }
-        await _api.sendCoinFlip(
-          sessionId: _activeSessionId,
-          side: bet.side,
-          amount: bet.amount,
-        );
+        final signature = await _keyService.signData('coinflip:${bet.side}:${bet.amount}');
+        final pubKey = await _keyService.getPublicKeySpkiBase64();
+        await _withRetriedSession((sessionId) {
+          return _api.sendCoinFlip(
+            gameId: bet.gameId,
+            address: _walletAddress,
+            sessionId: sessionId,
+            side: bet.side,
+            amount: bet.amount,
+            signature: signature,
+            publicKey: pubKey,
+          );
+        });
         if (!mounted) return;
         _showSnack(T.of(context, 'bet_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalance();
+        await _syncBalances();
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
       }
     });
+  }
+
+  Future<TResult> _withRetriedSession<TResult>(
+    Future<TResult> Function(String sessionId) action,
+  ) async {
+    var sessionId = await _ensureActiveSessionIdInternal(forceRefresh: false);
+    try {
+      return await action(sessionId);
+    } catch (error) {
+      if (!_api.isSessionExpiredError(error)) rethrow;
+      sessionId = await _ensureActiveSessionIdInternal(forceRefresh: true);
+      return action(sessionId);
+    }
+  }
+
+  Future<void> _clearActiveSession() async {
+    _activeSessionId = '';
+    await AppStorage.clearActiveSessionId();
+  }
+
+  Future<String> _ensureActiveSessionIdInternal({required bool forceRefresh}) async {
+    if (!forceRefresh && _activeSessionId.isEmpty) {
+      final persisted = await AppStorage.getActiveSessionId();
+      if (persisted.trim().isNotEmpty) {
+        _activeSessionId = persisted.trim();
+      }
+    }
+
+    if (!forceRefresh && _activeSessionId.isNotEmpty) {
+      final cached = _activeSessionId.trim();
+      if (DLinkerApi.isValidSessionId(cached) && await _api.isSessionAuthorized(cached)) {
+        return cached;
+      }
+      await _clearActiveSession();
+    } else if (forceRefresh && _activeSessionId.isNotEmpty) {
+      await _clearActiveSession();
+    }
+
+    if (_walletAddress.isEmpty) {
+      throw Exception('Session required');
+    }
+
+    final created = await _api.createPendingAuthSession();
+    final sessionId = (created['sessionId'] ?? '').toString().trim();
+    if (!DLinkerApi.isValidSessionId(sessionId)) {
+      throw Exception('Unable to create session');
+    }
+
+    final pubKey = await _keyService.getPublicKeySpkiBase64();
+    await _api.sendAuth(
+      sessionId: sessionId,
+      address: _walletAddress,
+      publicKey: pubKey,
+    );
+
+    _activeSessionId = sessionId;
+    await AppStorage.setActiveSessionId(sessionId);
+    return sessionId;
   }
 
   void _showSnack(String message) {
@@ -928,7 +1115,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final tokenSymbol = T.of(context, 'token_symbol');
+    final tokenSymbol = _selectedToken.displayName(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -937,7 +1124,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           IconButton(
             onPressed: () {
               _runWithLoading(() async {
-                await _syncBalance();
+                await _syncBalances();
               });
             },
             icon: const Icon(Icons.refresh),
@@ -961,9 +1148,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           AssetCard(
-                            balance: _balance,
+                            balance: _selectedBalance,
                             address: _walletAddress,
                             symbol: tokenSymbol,
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final token in AppToken.supported)
+                                ChoiceChip(
+                                  label: Text(token.displayName(context)),
+                                  selected: token.id == _selectedToken.id,
+                                  onSelected: (selected) {
+                                    if (!selected) return;
+                                    setState(() {
+                                      _selectedToken = token;
+                                    });
+                                  },
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 24),
                           Row(
@@ -1306,15 +1511,134 @@ class _ScannerDialogState extends State<ScannerDialog> {
   }
 }
 
+class MarketSimScreen extends StatefulWidget {
+  const MarketSimScreen({
+    super.key,
+    required this.api,
+    required this.walletAddress,
+  });
+
+  final DLinkerApi api;
+  final String walletAddress;
+
+  @override
+  State<MarketSimScreen> createState() => _MarketSimScreenState();
+}
+
+class _MarketSimScreenState extends State<MarketSimScreen> {
+  bool _loading = false;
+  Map<String, dynamic>? _account;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSnapshot();
+  }
+
+  Future<void> _loadSnapshot() async {
+    setState(() => _loading = true);
+    try {
+      final sessionId = await AppStorage.getActiveSessionId();
+      final res = await widget.api.sendMarketSimAction(
+        sessionId: sessionId,
+        action: 'snapshot',
+      );
+      if (mounted) {
+        setState(() {
+          _account = res['account'] as Map<String, dynamic>?;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Market Sim Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _bankDeposit() async {
+    setState(() => _loading = true);
+    try {
+      final sessionId = await AppStorage.getActiveSessionId();
+      await widget.api.sendMarketSimAction(
+        sessionId: sessionId,
+        action: 'bank_deposit',
+        extraPayload: {'amount': 100},
+      );
+      await _loadSnapshot();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('存款 100 成功')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deposit Error: $e')),
+        );
+      }
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bal = _account?['cash']?.toString() ?? '0.00';
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('股票市場 (Market Sim)'),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _loadSnapshot,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: _loading && _account == null
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Market Account Cash', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Text('\$$bal', style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: _loading ? null : _bankDeposit,
+                  icon: const Icon(Icons.account_balance),
+                  label: const Text('Bank Deposit (100)'),
+                ),
+                // Additional UI hooks for buy_stock / sell_stock can be naturally extended here
+              ],
+            ),
+    );
+  }
+}
+
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({
     super.key,
     required this.api,
     required this.keyService,
+    required this.symbol,
   });
 
   final DLinkerApi api;
   final KeyService keyService;
+  final String symbol;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -1410,8 +1734,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final symbol = T.of(context, 'token_symbol');
-
     return Scaffold(
       appBar: AppBar(
         title: Text(T.of(context, 'transaction_history')),
@@ -1478,7 +1800,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                     Text(
-                      '${isSend ? '-' : '+'} ${item.amount} $symbol',
+                      '${isSend ? '-' : '+'} ${item.amount} ${widget.symbol}',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         color: isSend ? null : Colors.green,
@@ -1721,19 +2043,8 @@ class ContactRepository {
   }
 }
 
-/// API 配置
-/// 後端服務由 zixi-casino 專案提供
-/// 專案位置: https://github.com/thumb2086/zixi-casino/tree/master/apps/api
-class ApiConfig {
-  /// 生產環境 API 基礎 URL
-  static const String baseUrl = 'https://zixi-casino.vercel.app/api/';
-
-  /// 連線逾時秒數
-  static const int defaultTimeoutSeconds = 30;
-}
-
 class DLinkerApi {
-  static const String _baseUrl = ApiConfig.baseUrl;
+  static const String _baseUrl = 'https://zixi-casino.vercel.app/api/';
   static const int _defaultAuthTtlSeconds = 600;
   static const int _minAuthTtlSeconds = 60;
   static const int _maxAuthTtlSeconds = 3600;
@@ -1758,7 +2069,7 @@ class DLinkerApi {
     }
 
     final authContext = await _buildAuthContext();
-    return _post('user.js', {
+    return _post('user', {
       'action': 'create_session',
       'ttlSeconds': ttlSeconds,
       ...authContext,
@@ -1766,7 +2077,7 @@ class DLinkerApi {
   }
 
   Future<Map<String, dynamic>> getAuthStatus({required String sessionId}) {
-    return _get('user.js', queryParameters: {
+    return _get('user', queryParameters: {
       'action': 'get_status',
       'sessionId': _normalizeSessionId(sessionId),
     });
@@ -1778,7 +2089,7 @@ class DLinkerApi {
     required String publicKey,
   }) async {
     final authContext = await _buildAuthContext();
-    final json = await _post('user.js', {
+    final json = await _post('user', {
       'action': 'authorize',
       'sessionId': _normalizeSessionId(sessionId),
       'address': _normalizeAddress(address),
@@ -1791,84 +2102,107 @@ class DLinkerApi {
   }
 
   Future<void> sendCoinFlip({
+    required String gameId,
+    required String address,
     required String sessionId,
     required String side,
     required String amount,
-    String token = 'zhixi',
+    required String signature,
+    required String publicKey,
   }) async {
     final normalizedSessionId = _normalizeSessionId(sessionId);
-    final betAmount = double.tryParse(amount) ?? 0;
-    final selection = side.toLowerCase() == 'heads' || side.toLowerCase() == 'h' ? 'heads' : 'tails';
-
-    final json = await _post('v1/games/coinflip/play', {
+    final normalizedGameId = gameId.trim().toLowerCase();
+    final json = await _post('game?game=$normalizedGameId&sessionId=$normalizedSessionId', {
+      'action': 'bet',
+      'gameId': gameId,
+      'address': _normalizeAddress(address),
+      'choice': side,
+      'amount': amount,
       'sessionId': normalizedSessionId,
-      'betAmount': betAmount,
-      'selection': selection,
-      'token': token,
+      'signature': signature,
+      'publicKey': _normalizePublicKey(publicKey),
     });
 
     if (json['success'] == true) return;
-    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Bet failed').toString());
+    throw Exception((json['error'] ?? 'Bet failed').toString());
   }
 
   Future<String> requestAirdrop({
     required String sessionId,
+    required String address,
+    required String tokenAddress,
   }) async {
-    final json = await _post('v1/wallet/airdrop', {
+    final json = await _post('wallet', {
+      'action': 'airdrop',
+      'sessionId': _normalizeSessionId(sessionId),
+      'address': _normalizeAddress(address),
+      'tokenAddress': _normalizeAddress(tokenAddress),
+    });
+
+    if (json['success'] == true) {
+      return (json['txHash'] ?? 'Success').toString();
+    }
+
+    throw Exception((json['error'] ?? 'Airdrop failed').toString());
+  }
+
+  Future<Map<String, dynamic>> getWalletSummary({
+    required String sessionId,
+  }) async {
+    final json = await _post('wallet', {
+      'action': 'summary',
       'sessionId': _normalizeSessionId(sessionId),
     });
 
     if (json['success'] == true) {
-      return (json['data']?['txHash'] ?? 'Success').toString();
+      return json;
     }
 
-    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Airdrop failed').toString());
+    throw Exception((json['error'] ?? 'Wallet summary failed').toString());
   }
 
-  Future<String> syncBalance(String walletAddress) async {
-    // Use v1 wallet/summary endpoint for balance
-    final json = await _get('v1/wallet/summary', queryParameters: {
+  Future<String> syncBalance(
+    String walletAddress, {
+    required String tokenAddress,
+  }) async {
+    final json = await _post('wallet', {
+      'action': 'get_balance',
       'address': _normalizeAddress(walletAddress),
+      'tokenAddress': _normalizeAddress(tokenAddress),
     });
 
-    if (json['success'] == true && json['data'] != null) {
-      // Try to get ZXC balance from onchain or db balance
-      final data = json['data'] as Map<String, dynamic>;
-      final balances = data['balances'] as Map<String, dynamic>?;
-      if (balances != null && balances['ZXC'] != null) {
-        return balances['ZXC'].toString();
-      }
-      // Fallback to onchain zxc balance
-      final onchain = data['onchain'] as Map<String, dynamic>?;
-      if (onchain != null && onchain['zxc'] != null) {
-        final zxc = onchain['zxc'] as Map<String, dynamic>;
-        if (zxc['balance'] != null) {
-          return zxc['balance'].toString();
-        }
-      }
+    if (json.containsKey('balance')) {
+      return json['balance'].toString();
     }
 
-    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Balance fetch failed').toString());
+    throw Exception((json['error'] ?? 'Balance fetch failed').toString());
   }
 
   Future<String> transfer({
     required String sessionId,
+    required String from,
     required String to,
     required String amount,
-    String token = 'zhixi',
+    required String signature,
+    required String publicKey,
+    required String tokenAddress,
   }) async {
-    final json = await _post('v1/wallet/transfer', {
+    final json = await _post('wallet', {
+      'action': 'secure_transfer',
       'sessionId': _normalizeSessionId(sessionId),
+      'from': _normalizeAddress(from),
       'to': _normalizeAddress(to),
       'amount': amount,
-      'token': token,
+      'signature': signature,
+      'publicKey': _normalizePublicKey(publicKey),
+      'tokenAddress': _normalizeAddress(tokenAddress),
     });
 
     if (json['success'] == true) {
-      return (json['data']?['txHash'] ?? '').toString();
+      return (json['txHash'] ?? '').toString();
     }
 
-    throw Exception((json['error']?['message'] ?? json['error'] ?? 'Transfer failed').toString());
+    throw Exception((json['error'] ?? 'Transfer failed').toString());
   }
 
   Future<HistoryResponse> getHistory({
@@ -1876,19 +2210,18 @@ class DLinkerApi {
     required int page,
     int limit = 20,
   }) async {
-    // Use v1 wallet/summary endpoint for history (ledger entries)
-    final json = await _get('v1/wallet/summary', queryParameters: {
+    final json = await _post('user', {
+      'action': 'get_history',
       'address': _normalizeAddress(walletAddress),
+      'page': page,
+      'limit': limit,
     });
 
     if (json['success'] != true) {
-      throw Exception((json['error']?['message'] ?? json['error'] ?? 'Unable to get history').toString());
+      throw Exception((json['error'] ?? 'Unable to get history').toString());
     }
 
-    final data = json['data'] as Map<String, dynamic>?;
-    final summary = data?['summary'] as Map<String, dynamic>?;
-    final listRaw = summary?['recentActivity'];
-
+    final listRaw = json['history'];
     final history = <HistoryItem>[];
     if (listRaw is List) {
       for (final item in listRaw) {
@@ -1901,10 +2234,46 @@ class DLinkerApi {
     }
 
     return HistoryResponse(
-      page: page,
-      hasMore: false, // v1 summary returns all recent activity, pagination not supported
+      page: (json['page'] as num?)?.toInt() ?? page,
+      hasMore: (json['hasMore'] as bool?) ?? false,
       history: history,
     );
+  }
+
+  Future<bool> isSessionAuthorized(String sessionId) async {
+    try {
+      final json = await getAuthStatus(sessionId: sessionId);
+      final status = (json['status'] ?? '').toString().toLowerCase();
+      return json['success'] == true && status == 'authorized';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool isSessionExpiredError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('session expired') ||
+        message.contains('missing from address') ||
+        message.contains('missing address');
+  }
+
+  Future<Map<String, dynamic>> sendMarketSimAction({
+    required String sessionId,
+    required String action,
+    Map<String, dynamic>? extraPayload,
+  }) async {
+    final Map<String, dynamic> payload = {
+      'action': action,
+      'sessionId': _normalizeSessionId(sessionId),
+    };
+    if (extraPayload != null) {
+      payload.addAll(extraPayload);
+    }
+    final json = await _post('market-sim', payload);
+    if (json['success'] == true) {
+      return json;
+    }
+    throw Exception((json['error'] ?? 'Market sim action failed').toString());
   }
 
   Future<Map<String, dynamic>> _get(
@@ -2401,9 +2770,10 @@ class NotificationService {
 
 class AppStorage {
   static const String _languageKey = 'app_language';
-  static const String _lastBalanceKey = 'last_known_balance';
+  static const String _lastBalanceKeyPrefix = 'last_known_balance_';
   static const String _deviceIdKey = 'device_id';
   static const String _activeSessionIdKey = 'active_session_id';
+  static const String _autoUpdateCheckEnabledKey = 'auto_update_check_enabled';
 
   static Future<AppLanguage> getLanguage() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2416,15 +2786,20 @@ class AppStorage {
     await prefs.setString(_languageKey, language.tag);
   }
 
-  static Future<double> getLastKnownBalance() async {
+  static Future<Map<String, double>> getLastKnownBalances() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_lastBalanceKey) ?? '0.0';
-    return double.tryParse(raw) ?? 0.0;
+    return {
+      for (final token in AppToken.supported)
+        token.id: double.tryParse(
+              prefs.getString('$_lastBalanceKeyPrefix${token.id}') ?? '0.0',
+            ) ??
+            0.0,
+    };
   }
 
-  static Future<void> setLastKnownBalance(String balance) async {
+  static Future<void> setLastKnownBalance(String tokenId, String balance) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastBalanceKey, balance);
+    await prefs.setString('$_lastBalanceKeyPrefix$tokenId', balance);
   }
 
   static Future<String> getDeviceId() async {
@@ -2453,6 +2828,16 @@ class AppStorage {
   static Future<void> clearActiveSessionId() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_activeSessionIdKey);
+  }
+
+  static Future<bool> getAutoUpdateCheckEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoUpdateCheckEnabledKey) ?? true;
+  }
+
+  static Future<void> setAutoUpdateCheckEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoUpdateCheckEnabledKey, enabled);
   }
 }
 
@@ -2498,6 +2883,12 @@ class T {
       'request_test_coins': 'Get Test Coins ({1})',
       'airdrop_request_sent': 'Airdrop request sent',
       'failure_message': 'Failure: {1}',
+      'update_available': 'Update Available',
+      'update_desc': 'A new version ({1}) is available.',
+      'update_later': 'Later',
+      'update_now': 'Update Now',
+      'update_open_failed': 'Unable to open update page',
+      'auto_update_check': 'Auto Check Updates',
       'session_required': 'Please complete Wallet Auth first',
       'casino': 'Casino',
       'manual_address_input': 'Enter Address Manually',
@@ -2560,6 +2951,12 @@ class T {
       'request_test_coins': '領取測試幣（{1}）',
       'airdrop_request_sent': '入金請求已送出',
       'failure_message': '失敗: {1}',
+      'update_available': '有新版本可更新',
+      'update_desc': '偵測到新版本（{1}），請更新。',
+      'update_later': '稍後',
+      'update_now': '立即更新',
+      'update_open_failed': '無法開啟更新頁面',
+      'auto_update_check': '自動檢查更新',
       'session_required': '請先完成錢包授權',
       'casino': '賭場',
       'manual_address_input': '手動輸入地址',
@@ -2620,6 +3017,12 @@ class T {
       'request_test_coins': '领取测试币（{1}）',
       'airdrop_request_sent': '入金请求已发送',
       'failure_message': '失败: {1}',
+      'update_available': '有新版本可更新',
+      'update_desc': '检测到新版本（{1}），请更新。',
+      'update_later': '稍后',
+      'update_now': '立即更新',
+      'update_open_failed': '无法打开更新页面',
+      'auto_update_check': '自动检查更新',
       'session_required': '请先完成钱包授权',
       'casino': '赌场',
       'manual_address_input': '手动输入地址',
