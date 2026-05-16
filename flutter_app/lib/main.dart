@@ -1950,8 +1950,6 @@ class ContactRepository {
 class DLinkerApi {
   static const String _baseUrl = 'https://zixi-casino.vercel.app/api/';
   static const int _defaultAuthTtlSeconds = 600;
-  static const int _minAuthTtlSeconds = 60;
-  static const int _maxAuthTtlSeconds = 3600;
   static const int _maxPublicKeyLength = 1024;
 
   static final RegExp _sessionIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$');
