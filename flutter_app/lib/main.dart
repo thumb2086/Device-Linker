@@ -227,6 +227,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   };
   bool _isLoading = false;
   bool _isSyncingBalance = false;
+  DateTime? _lastBalanceSyncAt;
+  static const Duration _balanceCacheTtl = Duration(seconds: 60);
   String _activeSessionId = '';
   bool _autoUpdateCheckEnabled = true;
 
@@ -401,8 +403,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _syncBalances({bool notifyIfIncreased = true}) async {
+  Future<void> _syncBalances({bool notifyIfIncreased = true, bool forceRefresh = false}) async {
     if (_walletAddress.isEmpty || _isSyncingBalance) return;
+
+    if (!forceRefresh && _lastBalanceSyncAt != null &&
+        DateTime.now().difference(_lastBalanceSyncAt!) < _balanceCacheTtl) {
+      return;
+    }
+
     _isSyncingBalance = true;
 
     try {
@@ -444,6 +452,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ...nextKnownBalances,
         };
       });
+      _lastBalanceSyncAt = DateTime.now();
     } catch (e) {
       debugPrint('Balance sync failed: $e');
     } finally {
@@ -469,7 +478,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (!mounted) return;
         _showSnack(T.of(context, 'airdrop_request_sent'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalances();
+        await _syncBalances(forceRefresh: true);
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
@@ -594,7 +603,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (!mounted) return;
         _showSnack(T.of(context, 'transfer_success'));
         await Future<void>.delayed(const Duration(seconds: 2));
-        await _syncBalances();
+        await _syncBalances(forceRefresh: true);
       } catch (e) {
         if (!mounted) return;
         _showSnack(T.of(context, 'failure_message', [e.toString()]));
