@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 class GithubUpdateService {
   static const String _owner = 'thumb2086';
-  static const String _repo = 'Device-Linker';
+  static const String _repo = 'zixi-wallet-app';
   static const String _apiUrl = 'https://api.github.com/repos/$_owner/$_repo/releases/latest';
   static const String _releasesUrl = 'https://github.com/$_owner/$_repo/releases';
   static const String _latestReleaseUrl = '$_releasesUrl/latest';
