@@ -37,10 +37,11 @@ flutter run
 ### 2) Backend API
 - Flutter 端預設呼叫 `https://zixi-casino.vercel.app/api/`
 - API 規格文件：`device-linker-api-integration.md`
-- 授權流程:
-  - `POST /api/v3/auth/create` 建立 pending session（可帶 `ttlSeconds`，預設 600，範圍 60-3600）
-  - `POST /api/auth` 授權（支援 `platform` / `clientType` / `deviceId` / `appVersion`）
-  - `GET /api/auth?sessionId=...` 查詢授權狀態（pending 會回傳過期時間）
+- Production Vercel routes:
+  - `POST /api/user.js` / `GET /api/user.js?action=get_status&sessionId=...` for Device-Linker hardware auth.
+  - `GET /api/v1/wallet/summary?sessionId=...` for ZHIXI/YJC balances and recent transactions.
+  - `POST /api/v1/wallet/transfer` and `POST /api/v1/wallet/airdrop` for wallet actions.
+  - `/api/user` and `/api/wallet` currently return 404 on production.
 
 ## 開發流程建議
 1. 先在 `flutter_app` 完成 UI 與簽名/交易流程。

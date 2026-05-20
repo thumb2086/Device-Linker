@@ -15,8 +15,8 @@ This folder is an isolated Flutter project for the Device-Linker migration.
 - QR receive address display
 - QR scanner + manual code input
 - Deep link auth flow (`dlinker:login:*`, `dlinker://login/*`)
-- Simplified `/api/user` auth metadata (`platform`, `clientType`, `deviceId`, `appVersion`)
-- Consolidated API support (`/api/user`, `/api/wallet`, `/api/stats`, `/api/game`, `/api/market-sim`, `/api/admin`)
+- Simplified `/api/user.js` auth metadata (`platform`, `clientType`, `deviceId`, `appVersion`)
+- Vercel production API support (`/api/user.js`, `/api/v1/wallet/summary`, `/api/v1/wallet/transfer`, `/api/v1/wallet/airdrop`)
 - Coin flip signature request flow (`dlinker:coinflip:*`)
 - Transaction history pagination
 - Local contacts management and picker

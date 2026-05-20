@@ -1,5 +1,12 @@
 
 ---
+## [2026-04-30] Vercel API Route Verification
+**Changes:**
+- Confirmed `https://zixi-casino.vercel.app/api/user` and `/api/wallet` return 404 in production.
+- Updated Flutter wallet calls to use live routes: `/api/user.js` for Device-Linker auth and `/api/v1/wallet/*` for summary, transfer, and airdrop.
+- Switched transaction history to the wallet summary `recentTransactions` feed and kept ZHIXI/YJC balance parsing from the summary response.
+
+---
 ## [2026-04-01] Cleanup: Legacy Firebase Removal
 **執行內容 (Repository Cleanup):**
 - 移除舊版 Firebase Functions 部署流程 `.github/workflows/deploy-functions.yml`。
